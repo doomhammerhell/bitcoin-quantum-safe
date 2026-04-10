@@ -1,0 +1,69 @@
+# === LaTeX build artifacts ===
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.synctex(busy)
+*.pdfsync
+*.nav
+*.snm
+*.vrb
+*.run.xml
+*.bcf
+*-blx.bib
+*.idx
+*.ilg
+*.ind
+*.lof
+*.lot
+*.maf
+*.mtc*
+*.nlo
+*.nls
+*.spl
+*.xdv
+
+# === Output PDF (build artifact, not source) ===
+paper/*.pdf
+
+# === OS junk ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# === Editor / IDE ===
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# === TeX editor specific ===
+*.texpadtmp/
+auto/
+_minted-*/
+
+# === Coq build artifacts ===
+*.vo
+*.vok
+*.vos
+*.glob
+*.v.d
+.coqdeps.d
+_CoqProject.bak
+
+# === TLA+ ===
+*.toolbox/
+states/

@@ -1,0 +1,1276 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\hypersetup{
+  pdftitle={Toward Protocol-Level Quantum Safety in Bitcoin},
+  pdfauthor={Mayckon Giovani},
+}
+
+\definecolor{codegray}{gray}{0.95}
+\lstset{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codegray},
+  frame=single,
+  breaklines=true,
+  columns=fullflexible,
+}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{remark}{Remark}
+
+\newcommand{\bits}{\{0,1\}}
+\newcommand{\negl}{\operatorname{negl}}
+\newcommand{\poly}{\operatorname{poly}}
+\newcommand{\Prob}{\operatorname{\mathbb{P}}}
+\newcommand{\E}{\operatorname{\mathbb{E}}}
+\newcommand{\Adv}{\operatorname{Adv}}
+\newcommand{\dom}{\operatorname{dom}}
+
+\newcommand{\Aq}{\mathcal{A}_q}
+\newcommand{\QPT}{\mathsf{QPT}}
+\newcommand{\PQC}{\mathsf{PQC}}
+
+\newcommand{\Tx}{\mathsf{Tx}}
+\newcommand{\Blk}{\mathsf{Blk}}
+\newcommand{\OutPoint}{\mathsf{OutPoint}}
+\newcommand{\Output}{\mathsf{Output}}
+\newcommand{\Value}{\mathsf{Value}}
+\newcommand{\Script}{\mathsf{Script}}
+\newcommand{\Witness}{\mathsf{Witness}}
+\newcommand{\UTXO}{\mathsf{UTXO}}
+
+\newcommand{\Eval}{\mathsf{Eval}}
+\newcommand{\Sighash}{\mathsf{Sighash}}
+\newcommand{\ValidTx}{\mathsf{ValidTx}}
+\newcommand{\ValidBlk}{\mathsf{ValidBlk}}
+\newcommand{\DeltaTx}{\delta_{\Tx}}
+\newcommand{\DeltaBlk}{\delta_{\Blk}}
+
+\newcommand{\Unauthorized}{\mathsf{Unauthorized}}
+\newcommand{\SpendPred}{\mathsf{SpendPred}}
+\newcommand{\SpendPredPQ}{\SpendPred_{\mathrm{PQ}}}
+\newcommand{\SpendPredEC}{\SpendPred_{\mathrm{EC}}}
+
+\newcommand{\Commit}{\mathsf{Commit}}
+\newcommand{\Cost}{\mathsf{Cost}}
+\newcommand{\weight}{\mathsf{weight}}
+
+\title{Toward Protocol-Level Quantum Safety in Bitcoin\\
+\large A Formal, Adversarial, and Invariant-Driven Treatment}
+\author{Mayckon Giovani}
+\date{April 2026 \quad{\small(Draft for review)}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+``Quantum-safe Bitcoin'' is not a property of a subset of well-behaved transactions.
+It is a global safety property of the consensus state machine: for every reachable consensus state and for every quantum-capable adversary, no consensus-valid execution may contain an unauthorized state transition.
+This paper specifies an execution model for Bitcoin at the level required for hostile review: explicit $\UTXO$ state, total validation predicates, deterministic transition functions for transactions and blocks, and a network/scheduler model sufficient to reason about mempool races and reorganizations.
+We define security goals in game-based form against quantum polynomial-time (QPT) adversaries, separate safety from liveness, and state concrete invariants (authorization integrity, state consistency, and determinism), proving that all invariants are preserved across valid transitions.
+We give a consensus-level construction for post-quantum authorization (via commit-and-reveal witness programs) and prove, via a complete game-hopping reduction, that unauthorized spends imply a break of the underlying post-quantum signature or hash binding assumptions --- with a tight, non-rewinding reduction.
+We further define and exclude cross-input and cross-transaction witness replay attacks via sighash commitment axioms, formalize network execution as traces and prove that adversarial network control does not bypass PQ authorization, and address the quantum random oracle model.
+Finally, we formalize the migration dilemma --- protocol-level quantum safety cannot be achieved without either freezing unmigrated legacy outputs or accepting open theft under Shor --- and provide a formal migration trace model with monotonicity guarantees.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction}
+
+Bitcoin's authorization model is cryptographic: the consensus rules grant spending power to whoever can produce a witness that satisfies the locking condition of an output.
+In the current protocol, that locking condition ultimately depends on secp256k1 signatures (ECDSA historically; Schnorr via Taproot)~\cite{fips186-5,bip340,bip341,bip342}.
+Under Shor's algorithm~\cite{shor1994algorithms}, this assumption collapses: discrete logarithms in elliptic curve groups become efficiently solvable by a quantum polynomial-time (QPT) adversary.
+
+The usual failure mode in ``quantum Bitcoin'' discussions is local reasoning: ``some transactions can be made post-quantum, therefore Bitcoin can be made post-quantum''.
+This is structurally wrong.
+Consensus security is quantified over the entire reachable state space and over adversarially chosen executions.
+If any reachable state admits any consensus-valid unauthorized spend under a QPT adversary, the protocol is not quantum-safe at the protocol level.
+
+\subsection{Protocol-level quantum safety (informal)}
+At a minimum, protocol-level quantum safety requires:
+\begin{enumerate}[leftmargin=2em]
+  \item a deterministic, total validation predicate and transition function (consensus is a state machine, not an API);
+  \item a game-based authorization definition against QPT adversaries;
+  \item invariants stated as quantifiers over \emph{all} reachable states and all consensus-valid traces;
+  \item an explicit network model (mempool observation and transaction replacement are not accidents; they are adversarial levers);
+  \item a migration model that acknowledges lost keys and therefore the liveness-vs-safety dilemma.
+\end{enumerate}
+
+\subsection{Contributions and boundary of claims}\label{sec:contributions}
+
+\paragraph{What is proven.}
+This paper proves the following results, all conditional on explicitly stated axioms:
+(i) consensus invariants (no double spend, state consistency, determinism) are preserved across all valid transitions (Theorems~\ref{thm:inv-preservation},~\ref{thm:inv-blk});
+(ii) unauthorized spends of PQ-locked outputs imply a break of the underlying PQ signature scheme (EUF-CMA) or hash binding, via a tight, non-rewinding game-hopping reduction valid in the QROM (Theorem~\ref{thm:reduction});
+(iii) cross-input and cross-transaction witness replay are excluded under the sighash commitment axiom (Theorem~\ref{thm:complete-auth});
+(iv) adversarial network control (mempool observation, conflict injection, reorgs) does not bypass PQ authorization (Theorem~\ref{thm:net-safety});
+(v) no cryptographic-only protocol transition can simultaneously preserve safety and liveness for all outputs when lost keys exist (Theorems~\ref{thm:no-free-migration},~\ref{thm:dilemma}).
+
+\paragraph{What is assumed.}
+The following are explicit axioms or implementation obligations, \emph{not} proven in this paper:
+(a) the sighash function satisfies the commitment property (Definition~\ref{def:sighash-commit}), including consensus-semantic injectivity --- verification against BIP\,341 is deferred to PO-4;
+(b) the transaction id function $h$ is collision-resistant against QPT adversaries (Definition~\ref{def:txid-cr});
+(c) the chosen PQ signature scheme is EUF-CMA secure against QPT adversaries, including in the QROM;
+(d) witness parsing is canonical, total, and deterministic (PO-1 through PO-3);
+(e) the mechanized spend predicate corresponds to the implementation used by consensus nodes (PO-8).
+All security theorems are conditional on these assumptions.
+Where an assumption is violated, the specific theorem that depends on it is identified.
+
+\section{System Model}\label{sec:model}
+
+We model the consensus-critical part of Bitcoin as a labeled transition system with explicit state and deterministic transitions.
+We intentionally separate (i) the \emph{ledger state machine} (what blocks do) from (ii) the \emph{network execution} (how transactions/blocks are observed, delayed, replaced).
+
+\subsection{Basic objects: outputs, outpoints, UTXO}
+
+\begin{definition}[Outpoints and outputs]
+An \emph{outpoint} is an identifier of the form
+\[
+op \in \OutPoint := \bits^{256} \times \mathbb{N},
+\]
+interpreted as $(\textsf{txid},\textsf{index})$.
+An \emph{output} is a tuple
+\[
+o \in \Output := \Value \times \Script,
+\]
+where $\Value \subset \mathbb{N}$ is a satoshi-denominated value domain and $\Script$ is a consensus-interpreted locking program (e.g., a ScriptPubKey or witness program).
+\end{definition}
+
+\begin{definition}[UTXO set]
+The UTXO set is a finite partial function
+\[
+U \in \UTXO := \OutPoint \rightharpoonup \Output.
+\]
+We write $U[op]$ for lookup when defined, and $\dom(U)\subseteq \OutPoint$ for its domain.
+\end{definition}
+
+\subsection{Transactions and witness evaluation}
+
+We abstract a transaction as a structured object containing inputs and outputs.
+An input references a prior outpoint and carries a witness.
+
+\begin{definition}[Transactions]
+A transaction is a tuple
+\[
+tx \in \Tx := (I,O,\textsf{meta}),
+\]
+where $I=(in_0,\dots,in_{n-1})$ is a list of inputs, $O=(o_0,\dots,o_{m-1})$ is a list of outputs $o_j\in\Output$, and \textsf{meta} contains consensus-relevant fields (locktime, sequences, etc.).
+Each input is of the form $in_i=(op_i,w_i)$ with $op_i\in\OutPoint$ and $w_i\in\Witness$.
+\end{definition}
+
+Witness evaluation is treated as a deterministic total predicate:
+\[
+\Eval:\Script \times \Witness \times \bits^{256} \to \bits,
+\]
+where the third argument is the message being authorized (a canonical \emph{sighash}).
+This hides Script-level complexity while making explicit the consensus requirement: there exists a unique message $m_i$ per input that is being authorized.
+
+\begin{definition}[Sighash]
+Let $\Sighash(tx,i,\textsf{ctx}) \in \bits^{256}$ be the deterministic sighash function for input $i$ of $tx$ under a consensus context \textsf{ctx} (Taproot defines such a function for SegWit v1 spending)~\cite{bip341,bip342}.
+We will write $m_i := \Sighash(tx,i,\textsf{ctx})$.
+\end{definition}
+
+We require the following commitment property, which prevents cross-transaction witness replay and partial-commitment attacks.
+
+\begin{definition}[Sighash commitment]\label{def:sighash-commit}
+The sighash function satisfies \emph{commitment} if:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Injectivity (modulo input index):}
+  For fixed consensus context $\textsf{ctx}$ and fixed input index $i$,
+  \[
+    \Sighash(tx,i,\textsf{ctx}) = \Sighash(tx',i,\textsf{ctx}) \;\Longrightarrow\; tx \equiv_{\mathrm{cs}} tx',
+  \]
+  where $tx \equiv_{\mathrm{cs}} tx'$ denotes \emph{consensus-semantic equivalence}: $tx$ and $tx'$ are identical in all consensus-critical fields (version, inputs with outpoints, outputs with values and scripts, locktime, and all fields committed to by the sighash).
+  Transactions that differ only in consensus-irrelevant encoding details (e.g., witness serialization padding, future annex content not committed to by the sighash) are considered equivalent under $\equiv_{\mathrm{cs}}$.
+  In particular, if $tx \equiv_{\mathrm{cs}} tx'$ then $\ValidTx(U,tx)=\ValidTx(U,tx')$ and $\DeltaTx(U,tx)=\DeltaTx(U,tx')$ for all $U$.
+  \item \textbf{Cross-input separation:}
+  For $i\neq j$ in the same transaction,
+  \[
+    \Sighash(tx,i,\textsf{ctx}) \neq \Sighash(tx,j,\textsf{ctx}).
+  \]
+  \item \textbf{Field coverage:}
+  $\Sighash(tx,i,\textsf{ctx})$ commits to all consensus-critical fields of $tx$ (version, inputs with their outpoints, outputs with their values and scripts, locktime) and to the spent output's script and value.
+\end{enumerate}
+\end{definition}
+
+\begin{remark}
+BIP\,341 Taproot sighash satisfies these properties by construction: it hashes all input outpoints, all output scripts/values, the spent output's scriptPubKey and amount, and the input index~\cite{bip341}.
+Legacy sighash modes (e.g., \texttt{SIGHASH\_NONE}, \texttt{SIGHASH\_SINGLE}) intentionally violate field coverage for specific use cases; outputs locked under such modes require separate analysis.
+The commitment property is an \emph{axiom} of our model; any concrete instantiation must be verified against it.
+\end{remark}
+
+\begin{definition}[Consensus-semantic equivalence]\label{def:cs-equiv}
+Two transactions $tx,tx'$ are \emph{consensus-semantically equivalent}, written $tx\equiv_{\mathrm{cs}}tx'$, if they agree on all fields that affect consensus validation and state transition:
+\begin{enumerate}[leftmargin=2em]
+  \item version, locktime, and sequence numbers;
+  \item the list of input outpoints $(op_0,\dots,op_{n-1})$;
+  \item the list of outputs $(o_0,\dots,o_{m-1})$ including values and scripts;
+  \item all fields committed to by the sighash function.
+\end{enumerate}
+The equivalence class $[tx]_{\mathrm{cs}}$ is the quotient of the transaction space by $\equiv_{\mathrm{cs}}$.
+Transactions in the same class may differ in consensus-irrelevant encoding details (e.g., witness serialization padding, non-committed annex content, or byte-level encoding choices that do not affect $\ValidTx$ or $\DeltaTx$).
+By construction: $tx\equiv_{\mathrm{cs}}tx'$ implies $\ValidTx(U,tx)=\ValidTx(U,tx')$, $\DeltaTx(U,tx)=\DeltaTx(U,tx')$, and $h(tx)=h(tx')$ for all $U$.
+
+We formalize the quotient via a \emph{canonical normalization function}:
+\[
+\mathsf{Norm}:\Tx\to\Tx, \qquad \text{such that } \mathsf{Norm}(tx)=\mathsf{Norm}(tx') \iff tx\equiv_{\mathrm{cs}}tx'.
+\]
+$\mathsf{Norm}$ strips all consensus-irrelevant fields and produces a unique representative of each equivalence class.
+Concretely, $\mathsf{Norm}(tx)$ retains exactly the fields enumerated in items 1--4 above and sets all other fields to a fixed canonical value (e.g., empty witness, zero-length annex).
+The sighash commitment property (Definition~\ref{def:sighash-commit}, item~1) can then be restated as:
+\[
+\Sighash(tx,i,\textsf{ctx})=\Sighash(tx',i,\textsf{ctx}) \;\Longrightarrow\; \mathsf{Norm}(tx)=\mathsf{Norm}(tx').
+\]
+This eliminates any ambiguity about what ``equivalent'' means: two transactions are equivalent if and only if they have the same canonical representative.
+\end{definition}
+
+\begin{lemma}[Norm-preserving validation and transition]\label{lem:norm-preserve}
+For all UTXO sets $U$ and transactions $tx$:
+\begin{enumerate}[leftmargin=2em]
+  \item $\ValidTx(U,tx)=\ValidTx(U,\mathsf{Norm}(tx))$;
+  \item $\DeltaTx(U,tx)=\DeltaTx(U,\mathsf{Norm}(tx))$;
+  \item $h(tx)=h(\mathsf{Norm}(tx))$.
+\end{enumerate}
+\end{lemma}
+
+\begin{proof}
+By definition, $\mathsf{Norm}$ preserves all fields enumerated in Definition~\ref{def:cs-equiv} (items 1--4) and only modifies consensus-irrelevant fields.
+$\ValidTx$ depends only on syntax (which $\mathsf{Norm}$ preserves by retaining all structural fields), input outpoints, output values/scripts, and witness evaluation.
+Witness evaluation depends on the spend predicate and sighash, both of which are functions of the consensus-critical fields only.
+$\DeltaTx$ depends only on the input outpoints (for removal) and the transaction id and output list (for creation), all of which are consensus-critical.
+$h(tx)$ is computed from the consensus-critical serialization (SegWit txid excludes witness data), so $h(tx)=h(\mathsf{Norm}(tx))$.
+\end{proof}
+
+\begin{remark}[Scope of the sighash axiom]\label{rem:sighash-scope}
+All security theorems in this paper (Theorems~\ref{thm:reduction},~\ref{thm:complete-auth},~\ref{thm:net-safety}) are conditional on the sighash commitment property (Definition~\ref{def:sighash-commit}).
+We do \emph{not} formally verify that BIP\,341's sighash satisfies this property; such verification is an implementation obligation (PO-4 in Section~\ref{sec:proof-obligations}).
+Our results should be read as: ``\emph{if} the deployed sighash satisfies Definition~\ref{def:sighash-commit}, \emph{then} the stated security guarantees hold.''
+A formal proof that BIP\,341 satisfies Definition~\ref{def:sighash-commit} would require mechanizing the BIP\,341 specification and proving injectivity of the hash preimage structure --- a valuable but separate effort.
+\end{remark}
+
+\subsection{Validation predicates and transition functions}
+
+The critique that ``you cannot prove anything without $\delta$'' is correct.
+We therefore define total predicates and deterministic transition functions.
+
+\begin{definition}[Transaction validation]\label{def:validtx}
+Transaction validation is a predicate
+\[
+\ValidTx:\UTXO \times \Tx \to \bits
+\]
+defined as
+\[
+\ValidTx(U,tx)=1 \iff
+\Bigl(\textsf{Syntax}(tx)\wedge \textsf{NoDupInputs}(tx)\wedge \textsf{InputsExist}(U,tx)\wedge \textsf{ValueConservation}(U,tx)\wedge \textsf{WitnessOK}(U,tx)\Bigr),
+\]
+where $\textsf{WitnessOK}(U,tx)$ expands to:
+\[
+\forall i \in \{0,\dots,|I|-1\}:\;\;
+\Eval(\pi_i, w_i, m_i)=1,
+\]
+with $(\cdot,\pi_i)=U[op_i]$ and $m_i=\Sighash(tx,i,\textsf{ctx})$.
+\end{definition}
+
+\begin{definition}[Transaction transition]
+The transaction transition function
+\[
+\DeltaTx:\UTXO \times \Tx \to \UTXO
+\]
+is defined (for all inputs) by removing spent outpoints and adding newly created outpoints:
+\[
+\DeltaTx(U,tx) := \bigl(U \setminus \{op_i\}_{i}\bigr)\ \cup\ \{(h(tx),j)\mapsto o_j\}_{j},
+\]
+where $h(tx)\in\bits^{256}$ is the canonical transaction id and $j$ ranges over the output indices.
+\end{definition}
+
+\begin{remark}
+In actual Bitcoin, the txid and outpoint formation depends on SegWit/non-SegWit serialization (wtxid, etc.).
+For protocol-level authorization analysis, the essential property is uniqueness and determinism: outpoint identifiers are stable and collision-resistant.
+\end{remark}
+
+We formalize this as an explicit axiom, since the invariant preservation proof (Section~\ref{sec:invariant-preservation}) depends on it.
+
+\begin{definition}[Transaction id collision resistance]\label{def:txid-cr}
+The transaction id function $h:\Tx\to\bits^{256}$ satisfies \emph{collision resistance} if for all QPT adversaries $\Aq$:
+\[
+\Prob[\Aq \text{ outputs } (tx,tx') \text{ with } tx\neq tx' \text{ and } h(tx)=h(tx')] \le \negl(\lambda).
+\]
+The system requirement is not generic collision search in a vacuum but collision against the \emph{active identifier set}: for any reachable state $U$ and any new transaction $tx$, the newly created outpoints $(h(tx),j)$ must not collide with any $op\in\dom(U)$.
+This is a weaker requirement than arbitrary collision resistance: the adversary must find a collision against a specific, evolving set of existing identifiers rather than against an arbitrary second preimage.
+\end{definition}
+
+\begin{remark}[Concrete collision budget]\label{rem:collision-budget}
+Bitcoin uses double-SHA-256 for txid computation ($n=256$ output bits).
+The best known quantum collision attack (BHT algorithm) achieves $O(2^{n/3})=O(2^{85})$ query complexity for generic collisions.
+However, the system's actual requirement is collision avoidance against the active outpoint set of size $|\dom(U)|$.
+Let $N_{\mathrm{total}}$ denote the total number of distinct outpoints ever introduced into the reachable state space across the system's lifetime.
+The probability that any pair among $N_{\mathrm{total}}$ identifiers collides is bounded by the birthday paradox:
+\[
+p_{\mathrm{coll}} \;\le\; \binom{N_{\mathrm{total}}}{2}\cdot 2^{-256} \;\approx\; \frac{N_{\mathrm{total}}^2}{2^{257}}.
+\]
+Under quantum speedup (BHT), an adversary actively searching for collisions achieves advantage $O(N_{\mathrm{total}}^{1/3}\cdot 2^{-256/3})$ per query, but the total collision probability over $N_{\mathrm{total}}$ identifiers remains dominated by $N_{\mathrm{total}}^2/2^{257}$ for passive collision (birthday) and $O(N_{\mathrm{total}}/2^{85})$ for active quantum search against the existing set.
+
+With $N_{\mathrm{total}}\approx 10^9$ (cumulative outpoints over Bitcoin's lifetime), the passive birthday bound gives $p_{\mathrm{coll}}\approx 2^{-197}$; the active quantum search bound gives $\approx 2^{-55}$.
+For $N_{\mathrm{total}}\approx 10^{12}$ (aggressive long-horizon estimate), these become $\approx 2^{-177}$ and $\approx 2^{-45}$ respectively.
+Both remain negligible for practical security parameters.
+If future quantum capabilities or UTXO growth erode this margin, the txid function can be upgraded (e.g., to a 384-bit or 512-bit hash) as part of a witness version bump.
+The invariant preservation proof (Theorem~\ref{thm:inv-preservation}) assumes collision resistance of $h$; if this assumption fails, $\textsf{StateConsistency}$ may be violated by outpoint overwrites.
+\end{remark}
+
+\begin{definition}[Block validation and transition]
+A block is $B\in\Blk:=(\textsf{hdr},(tx_0,\dots,tx_{k-1}))$.
+Block validation is a predicate $\ValidBlk:\UTXO\times\Blk\to\bits$ requiring PoW validity and sequential transaction validity (coinbase rules elided here for brevity).
+The block transition function $\DeltaBlk:\UTXO\times\Blk\to\UTXO$ applies $\DeltaTx$ sequentially:
+\[
+\DeltaBlk(U,B) := \DeltaTx(\cdots\DeltaTx(\DeltaTx(U,tx_0),tx_1)\cdots,tx_{k-1}).
+\]
+\end{definition}
+
+\subsection{Determinism as an invariant}
+Consensus is well-defined only if $\ValidTx$ and $\DeltaTx$ are deterministic and total.
+We capture this explicitly as a safety invariant (Section~\ref{sec:invariants}) rather than treating it as ``implementation detail''.
+
+\section{Adversary and Network Model}\label{sec:threat}
+
+We treat the adversary as QPT with explicit network control.
+This is not ideological; it is necessary to reason about mempool races and reorg windows.
+
+\subsection{Quantum capabilities}
+We assume $\Aq$ is a quantum polynomial-time adversary with access to:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Shor}: polynomial-time discrete logarithms and factoring~\cite{shor1994algorithms}.
+  \item \textbf{Grover}: quadratic speedup for unstructured search and preimage search~\cite{grover1996fast,zalka1999grover}.
+\end{enumerate}
+
+\subsection{Network/scheduler capabilities}
+We model the network as a set of nodes $\mathcal{N}$ that exchange messages (transactions, blocks).
+The delivery schedule is controlled by a scheduler with adversarial influence:
+\[
+\mathsf{Sched}:\ (\textsf{msgs},\textsf{time}) \to \textsf{deliveries}.
+\]
+The adversary's network control $\mathsf{NetCtl}$ includes:
+\begin{itemize}[leftmargin=2em]
+  \item observing transactions in mempool prior to confirmation;
+  \item injecting conflicts and fee-bumping replacements;
+  \item delaying propagation (eclipse/partition-like behavior);
+  \item exploiting reorganizations in the chain selection rule.
+\end{itemize}
+
+For chain consistency and reorg reasoning, we lean on the Bitcoin Backbone model~\cite{garay2015bitcoin}, which formalizes safety/liveness of Nakamoto consensus under bounded delay and adversarial mining power.
+
+\section{Security Goals and Invariants}\label{sec:invariants}
+
+The paper is invariant-driven. This requires stating invariants in a form that can be checked against traces and used in proofs.
+We also separate \emph{safety} (nothing bad happens) from \emph{liveness} (something good eventually happens).
+
+\subsection{Safety vs liveness}
+
+\begin{definition}[Safety]
+A safety property is a predicate $P$ such that for every execution trace $\tau$ of the consensus state machine, if $\tau$ violates $P$ then there exists a finite prefix of $\tau$ that already violates $P$.
+Operationally: an explicit ``bad event'' occurs.
+\end{definition}
+
+\begin{definition}[Liveness]
+A liveness property is a predicate $Q$ such that for every finite execution prefix, there exists an extension where $Q$ holds.
+Operationally: assuming adequate network and mining conditions, honest transactions eventually confirm.
+\end{definition}
+
+Protocol-level quantum safety is primarily a \emph{safety} requirement: prevent unauthorized transitions.
+It does not automatically imply liveness under censorship or under fee-market adversaries.
+
+\subsection{UTXO consistency invariants}
+Let $U_t$ be the UTXO set after applying a prefix of blocks.
+We require:
+\begin{align*}
+\textsf{NoDoubleSpend} &:\quad \forall op,\; \text{op is removed from }U_t\text{ at most once across the trace},\\
+\textsf{StateConsistency} &:\quad \forall op,\; op\notin\dom(U_t)\ \Rightarrow\ \text{either op never existed or has been spent}.
+\end{align*}
+
+\subsection{Transition determinism}
+\[
+\textsf{Determinism}:\quad
+\forall U,tx,\; \ValidTx(U,tx)=1 \Rightarrow \exists!\ U' \text{ such that } U'=\DeltaTx(U,tx).
+\]
+
+\subsection{Authorization integrity: game-based definition}
+
+We need a definition that a hostile reviewer recognizes: a concrete game whose advantage must be negligible.
+We use EUF-CMA style authorization games, extended to QPT adversaries~\cite{gmr1988,boneh2013quantum}.
+
+\subsection{Invariant preservation}\label{sec:invariant-preservation}
+
+Stating invariants is necessary but not sufficient.
+We must prove that valid transitions preserve them.
+
+\begin{theorem}[Invariant preservation under $\DeltaTx$]\label{thm:inv-preservation}
+Let $U$ be a UTXO set satisfying $\textsf{NoDoubleSpend}(U)$, $\textsf{StateConsistency}(U)$, and $\textsf{Determinism}(U)$.
+Let $tx$ be a transaction with $\ValidTx(U,tx)=1$.
+Assume collision resistance of $h$ (Definition~\ref{def:txid-cr}).
+Then $U':=\DeltaTx(U,tx)$ satisfies all three invariants.
+\end{theorem}
+
+\begin{proof}
+We verify each invariant in turn.
+
+\emph{Determinism.}
+$\DeltaTx$ is defined by a single expression (set difference plus union) with no branching on non-deterministic state.
+Given $U$ and $tx$, the result $U'$ is uniquely determined.
+
+\emph{NoDoubleSpend.}
+$\ValidTx$ requires $\textsf{InputsExist}(U,tx)$: every $op_i$ referenced by $tx$ is in $\dom(U)$.
+$\textsf{NoDupInputs}(tx)$ ensures no $op_i$ appears twice within $tx$.
+$\DeltaTx$ removes each $op_i$ from $U$ exactly once.
+Since $op_i\in\dom(U)$ and $U$ satisfies $\textsf{NoDoubleSpend}$, each $op_i$ has been created exactly once and not previously spent.
+After removal, $op_i\notin\dom(U')$, so it cannot be spent again.
+
+\emph{StateConsistency.}
+For any $op\notin\dom(U')$, either:
+(a) $op\notin\dom(U)$ and $op$ is not a newly created outpoint of $tx$, so by the inductive hypothesis on $U$, $op$ either never existed or was previously spent;
+(b) $op\in\dom(U)$ and $op=op_i$ for some input of $tx$, so $op$ has now been spent; or
+(c) $op$ is a newly created outpoint $(h(tx),j)$ --- but these are added to $U'$ by construction, so $op\in\dom(U')$, contradicting the assumption.
+
+Additionally, collision resistance of $h$ (Definition~\ref{def:txid-cr}) ensures that newly created outpoints $(h(tx),j)$ do not collide with existing outpoints in $\dom(U)\setminus\{op_i\}_i$, preventing silent overwrites that would violate state consistency.
+\end{proof}
+
+\begin{theorem}[Invariant preservation under $\DeltaBlk$]\label{thm:inv-blk}
+If $U$ satisfies all three invariants and $\ValidBlk(U,B)=1$, then $\DeltaBlk(U,B)$ satisfies all three invariants.
+\end{theorem}
+
+\begin{proof}
+$\DeltaBlk$ applies $\DeltaTx$ sequentially.
+$\ValidBlk$ requires each $tx_k$ to be valid against the intermediate state produced by applying $tx_0,\dots,tx_{k-1}$.
+By induction on $k$ and Theorem~\ref{thm:inv-preservation}, each intermediate state satisfies the invariants, and therefore so does the final state.
+\end{proof}
+
+\begin{corollary}[Global invariant preservation]
+For any execution trace $\tau=(U_0,B_1,U_1,B_2,U_2,\dots)$ where $U_0$ satisfies the invariants and each $\ValidBlk(U_{t-1},B_t)=1$, every reachable state $U_t$ satisfies $\textsf{NoDoubleSpend}$, $\textsf{StateConsistency}$, and $\textsf{Determinism}$.
+\end{corollary}
+
+\subsection{Cryptographic primitives and authorization games}\label{sec:auth-games}
+
+We now define the authorization predicate and the game-based security notion.
+
+\paragraph{Cryptographic primitives.}
+Let $\PQC\textsf{-Sig}=(\mathsf{Kg},\mathsf{Sign},\mathsf{Vfy})$ be a post-quantum signature scheme intended for consensus use (e.g., ML-DSA~\cite{fips204} or SLH-DSA~\cite{fips205}).
+Let $H:\bits^\star\to\bits^{256}$ be a fixed hash function (e.g., SHA-256).
+
+\begin{definition}[PQ spend predicate]
+For a commitment $P\in\bits^{256}$ and an input message $m\in\bits^{256}$, define
+\[
+\SpendPredPQ(P,m,w)=1
+\]
+iff the witness parses as $w\mapsto (\mathsf{pk},\sigma)$, satisfies $H(\mathsf{pk})=P$, and $\mathsf{Vfy}(\mathsf{pk},m,\sigma)=1$.
+\end{definition}
+
+\begin{definition}[Authorization predicate]\label{def:auth-pred}
+A transaction $tx$ with $\ValidTx(U,tx)=1$ satisfies the \emph{authorization predicate} $\mathsf{Auth}(U,tx)$ if, for every input $i$ of $tx$ spending output $op_i$ with commitment $P_i$, the witness $w_i$ could only have been produced by an entity with access to the signing oracle $\mathsf{Sign}(\mathsf{sk}_i,\cdot)$ where $(\mathsf{sk}_i,\mathsf{pk}_i)\gets\mathsf{Kg}$ and $H(\mathsf{pk}_i)=P_i$.
+Formally, $\mathsf{Auth}(U,tx)$ holds iff for every input $i$:
+\[
+\exists\, q \in \mathcal{Q}_i:\; m_i = q,
+\]
+where $\mathcal{Q}_i$ is the set of messages queried to $\mathsf{Sign}(\mathsf{sk}_i,\cdot)$ and $m_i=\Sighash(tx,i,\textsf{ctx})$.
+In other words, a transaction is authorized iff every input's sighash was submitted to the legitimate signing oracle.
+This definition eliminates ambiguity about delegation: authorization is defined purely by oracle access, not by intent or identity.
+\end{definition}
+
+\begin{remark}[Delegation and multi-party signing]\label{rem:delegation}
+The oracle-based definition of $\mathsf{Auth}$ naturally accommodates delegation and multi-party signing (MPC/threshold) flows: if a party delegates signing authority, the delegate obtains access to $\mathsf{Sign}(\mathsf{sk},\cdot)$ (or a functional equivalent that produces valid signatures).
+In the game-based model, this is captured by the delegate being allowed to query the signing oracle.
+A delegated signature on $m_i$ results in $m_i\in\mathcal{Q}_i$, so $\mathsf{Auth}$ holds.
+The definition does not require that the original key holder personally invokes the oracle --- only that the oracle was invoked on the relevant message by some entity with legitimate access.
+Unauthorized spend means no entity with oracle access authorized the sighash, regardless of organizational structure.
+\end{remark}
+
+\begin{definition}[Unauthorized spend]\label{def:unauthorized-compact}
+A consensus-valid transaction is \emph{unauthorized} if:
+\[
+\Unauthorized(U,tx) \;:\iff\; \ValidTx(U,tx)=1 \;\wedge\; \neg\,\mathsf{Auth}(U,tx).
+\]
+A trace $\tau$ violates authorization integrity if $\exists\, t,\, tx\in B_t:\; \Unauthorized(U_{t-1},tx)$.
+\end{definition}
+
+\begin{definition}[Authorization break game]\label{def:authbreak}
+The game $\mathsf{AuthBreak}^{\Aq}(\lambda)$ is:
+\begin{enumerate}[leftmargin=2em]
+  \item Challenger samples $(\mathsf{sk},\mathsf{pk})\gets \mathsf{Kg}(1^\lambda)$ and sets $P:=H(\mathsf{pk})$.
+  \item $\Aq$ receives $P$ and oracle access to $\mathsf{Sign}(\mathsf{sk},\cdot)$.
+  \item $\Aq$ outputs $(m^\star,w^\star)$.
+  \item $\Aq$ wins iff $\SpendPredPQ(P,m^\star,w^\star)=1$ and $m^\star$ was not previously queried to the signing oracle.
+\end{enumerate}
+Define $\Adv_{\mathrm{Auth}}^{\Aq}(\lambda):=\Prob[\mathsf{AuthBreak}^{\Aq}(\lambda)=1]$.
+\end{definition}
+
+\begin{definition}[Protocol-level authorization integrity]
+We say that PQ-locked outputs satisfy authorization integrity against QPT adversaries if for all $\Aq\in\QPT$,
+\[
+\Adv_{\mathrm{Auth}}^{\Aq}(\lambda) \le \negl(\lambda).
+\]
+\end{definition}
+
+\section{Why secp256k1 Authorization Fails Under Shor}\label{sec:shorbreak}
+
+Bitcoin's legacy spend predicates are instantiations of $\SpendPredEC$ that verify secp256k1 signatures.
+Under Shor, secp256k1 key recovery becomes feasible.
+
+\begin{lemma}[Key recovery under Shor]
+Let $Q=dG$ be a secp256k1 public key.
+In the presence of Shor's algorithm, there exists a QPT algorithm that computes $d$ from $Q$.
+\end{lemma}
+
+\begin{theorem}[Impossibility with active ECDLP surface]\label{thm:impossible-ecdlp}
+If the reachable state space contains any spendable output whose consensus spend predicate depends on secp256k1 signatures (ECDSA or Schnorr), then Bitcoin cannot satisfy protocol-level quantum safety against $\Aq$.
+\end{theorem}
+
+\begin{proof}
+Let $U$ be a reachable consensus state containing a spendable output $o=(v,\pi)$ at outpoint $op\in\dom(U)$, where $\pi$ is a locking script that accepts a witness containing a valid secp256k1 signature under public key $Q$.
+We construct a QPT adversary $\Aq$ that produces an unauthorized spend.
+
+\emph{Step 1 (Key recovery).}
+$Q$ is either directly on-chain (P2PK, P2TR key path) or revealed in the mempool upon an honest spend attempt (P2PKH, P2WPKH).
+In either case, $\Aq$ obtains $Q$.
+By Shor's algorithm applied to the secp256k1 curve~\cite{shor1994algorithms,proos2003shor}, $\Aq$ computes $d\in\mathbb{Z}_n$ such that $Q=dG$ in polynomial time.
+
+\emph{Step 2 (Witness construction).}
+$\Aq$ constructs a transaction $tx'$ that spends $op$ to an adversary-controlled output.
+Using $d$, $\Aq$ computes a valid ECDSA (or Schnorr) signature $\sigma'$ on $m':=\Sighash(tx',0,\textsf{ctx})$.
+The witness $w':=(\sigma',Q)$ satisfies $\Eval(\pi,w',m')=1$.
+
+\emph{Step 3 (Consensus acceptance).}
+Since $op\in\dom(U)$, $\textsf{InputsExist}$ holds.
+$tx'$ is constructed to satisfy $\textsf{Syntax}$, $\textsf{NoDupInputs}$, and $\textsf{ValueConservation}$.
+$\textsf{WitnessOK}$ holds because $\Eval(\pi,w',m')=1$.
+Therefore $\ValidTx(U,tx')=1$, and the spend is consensus-valid.
+
+\emph{Step 4 (Authorization violation).}
+The spend is unauthorized: $\Aq$ was never given $d$ by the legitimate owner, and the witness was not produced on behalf of the owner.
+This violates authorization integrity (Definition~\ref{def:authbreak} adapted to $\SpendPredEC$).
+
+Since $U$ was an arbitrary reachable state containing such an output, protocol-level quantum safety fails.
+\end{proof}
+
+\subsection{Public key exposure and mempool races}
+Key exposure is not homogeneous across output types.
+Some outputs reveal secp256k1 public keys on-chain (immediate exposure), while others reveal them only when spent (mempool window).
+
+\begin{table}[t]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Output type & Verifier exposed? & Attack window under Shor \\
+\midrule
+P2PK (legacy) & yes (on-chain) & immediate \\
+P2TR (key path) & yes (on-chain) & immediate \\
+P2PKH / P2WPKH & no (hash until spend) & mempool race at first spend \\
+P2SH / P2WSH & no (script until spend) & mempool race upon reveal \\
+\bottomrule
+\end{tabular}
+\caption{Exposure timing of secp256k1 verifiers in Bitcoin.}
+\end{table}
+
+\begin{lemma}[Mempool race theft]\label{lem:mempool-race}
+Consider an output whose verifier is revealed only in the witness of an honest spend (e.g., P2WPKH).
+If (i) Shor key recovery is fast relative to time-to-confirmation and (ii) $\Aq$ can inject and preferentially propagate conflicts, then $\Aq$ has a non-negligible probability of replacing the honest spend with a conflicting spend to an adversarial output.
+\end{lemma}
+
+\begin{remark}
+Quantitative analyses of this race appear in quantum attack treatments of Bitcoin~\cite{aggarwal2018quantum}.
+The point for protocol design is qualitative: hiding a secp256k1 key until spend does not yield quantum safety; it only shifts the break into a race condition.
+\end{remark}
+
+\section{A Consensus-Level PQ Authorization Construction}\label{sec:construction}
+
+The minimal consensus construction is to introduce PQ-locked outputs whose spend predicate is \emph{only} $\SpendPredPQ$, and to couple this with a migration/enforcement policy (Section~\ref{sec:migration}).
+
+\subsection{Witness-program commitment}
+SegWit witness programs provide a clean versioning mechanism~\cite{bip141}.
+Abstractly, an output is identified by a pair $(v,P)$ where $v$ is a version byte and $P$ is a bounded-size program.
+For PQ, the program must remain compact; therefore we commit to the PQ verifying key using a 32-byte hash:
+\[
+P := H(\mathsf{pk}) \in \bits^{256}.
+\]
+The witness reveals $(\mathsf{pk},\sigma)$.
+
+\subsection{Spend predicate}
+Given an input message $m=\Sighash(tx,i,\textsf{ctx})$, the consensus spend predicate is:
+\[
+\SpendPredPQ(P,m,w)=1
+\iff
+\exists (\mathsf{pk},\sigma):\ \textsf{Parse}(w)=(\mathsf{pk},\sigma)\ \wedge\ H(\mathsf{pk})=P\ \wedge\ \mathsf{Vfy}(\mathsf{pk},m,\sigma)=1.
+\]
+
+\subsection{Determinism, parsing, and DoS bounds}
+Consensus cannot tolerate ambiguous encoding.
+Witness parsing must be fully specified and canonical.
+Additionally, verification cost must be bounded and accounted for in the block resource model.
+We model this as a cost function $\Cost(tx)$ and require:
+\[
+\forall tx:\quad \ValidTx(U,tx)=1 \Rightarrow \Cost(tx) \le \alpha\cdot \weight(tx),
+\]
+for a fixed engineering constant $\alpha$.
+
+At the block level, we additionally require a global cost cap:
+\begin{definition}[Block cost invariant]\label{def:block-cost}
+Block validation enforces:
+\[
+\forall B:\quad \ValidBlk(U,B)=1 \Rightarrow \sum_{tx\in B}\Cost(tx) \le C_{\max},
+\]
+where $C_{\max}$ is a consensus-enforced constant (analogous to the 4\,MWU weight limit in current Bitcoin).
+\end{definition}
+
+This invariant ensures that even if individual PQ witnesses are expensive to verify, the total per-block verification cost is bounded.
+Without it, an adversary could construct blocks that are cryptographically valid but operationally infeasible to verify, degrading network liveness without breaking authorization.
+The constant $C_{\max}$ must be parameterized jointly with the choice of $\PQC\textsf{-Sig}$ and the target verification throughput (see Section~\ref{sec:engineering}).
+
+\section{Security Theorems: From Unauthorized Spends to Cryptographic Breaks}\label{sec:theorems}
+
+The core requirement is a reduction: a consensus-valid unauthorized spend of a PQ-locked output should imply a break of the underlying assumptions.
+We follow the game-hopping methodology~\cite{shoup2004sequences,bellare2006security}.
+
+\subsection{Hash binding game}
+Define the hash binding game $\mathsf{BindH}^{\mathcal{B}}$:
+the challenger samples $\mathsf{pk}\leftarrow\bits^\star$ from the key distribution of $\mathsf{Kg}$, sets $P:=H(\mathsf{pk})$, and $\mathcal{B}$ wins if it outputs $\mathsf{pk}'\neq \mathsf{pk}$ such that $H(\mathsf{pk}')=P$.
+Let $\Adv_{\mathrm{BindH}}^{\mathcal{B}}$ be the winning probability.
+
+\subsection{Full game-hopping reduction}
+
+We now give the complete reduction via a sequence of games $G_0 \to G_1 \to G_2$.
+
+\begin{definition}[Game $G_0$: real authorization game]
+$G_0$ is identical to $\mathsf{AuthBreak}^{\Aq}(\lambda)$ (Definition~\ref{def:authbreak}).
+The challenger samples $(\mathsf{sk},\mathsf{pk})\gets\mathsf{Kg}(1^\lambda)$, sets $P:=H(\mathsf{pk})$, gives $P$ and signing oracle access to $\Aq$.
+$\Aq$ outputs $(m^\star,w^\star)$ and wins if $\SpendPredPQ(P,m^\star,w^\star)=1$ with $m^\star$ unqueried.
+\[
+\Prob[G_0=1] = \Adv_{\mathrm{Auth}}^{\Aq}(\lambda) =: \epsilon(\lambda).
+\]
+\end{definition}
+
+\begin{definition}[Game $G_1$: binding enforcement]
+$G_1$ is identical to $G_0$ except: after $\Aq$ outputs $(m^\star,w^\star)$ with $\textsf{Parse}(w^\star)=(\mathsf{pk}^\star,\sigma^\star)$, if $H(\mathsf{pk}^\star)=P$ but $\mathsf{pk}^\star\neq\mathsf{pk}$, the game sets $\mathsf{bad}:=\mathsf{true}$ and the adversary \emph{still wins}.
+Otherwise the game proceeds identically.
+\end{definition}
+
+\begin{lemma}[Transition $G_0 \to G_1$]\label{lem:g0g1}
+$G_0$ and $G_1$ are identical games (no behavioral change).
+The flag $\mathsf{bad}$ is purely bookkeeping:
+\[
+\Prob[G_0=1] = \Prob[G_1=1].
+\]
+\end{lemma}
+
+\begin{proof}
+The only difference is the introduction of the flag $\mathsf{bad}$, which does not alter any output or oracle response.
+The winning condition is unchanged.
+\end{proof}
+
+\begin{definition}[Game $G_2$: abort on binding break]
+$G_2$ is identical to $G_1$ except: if $\mathsf{bad}=\mathsf{true}$ (i.e., $\mathsf{pk}^\star\neq\mathsf{pk}$ but $H(\mathsf{pk}^\star)=P$), the adversary \emph{loses} (the game outputs $0$).
+\end{definition}
+
+\begin{lemma}[Transition $G_1 \to G_2$]\label{lem:g1g2}
+\[
+|\Prob[G_1=1]-\Prob[G_2=1]| \le \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda).
+\]
+\end{lemma}
+
+\begin{proof}
+$G_1$ and $G_2$ differ only when $\mathsf{bad}=\mathsf{true}$.
+By the fundamental lemma of game-playing~\cite{bellare2006security}:
+\[
+|\Prob[G_1=1]-\Prob[G_2=1]| \le \Prob[\mathsf{bad}=\mathsf{true}\text{ in }G_1].
+\]
+We construct $\mathcal{B}_H$ that breaks hash binding whenever $\mathsf{bad}$ is set.
+$\mathcal{B}_H$ receives a challenge $P$ (where $P=H(\mathsf{pk})$ for unknown $\mathsf{pk}$).
+$\mathcal{B}_H$ cannot sign directly, but it simulates the signing oracle using the real $\mathsf{sk}$ (which it generates itself; the binding game is about finding a second preimage of $P$, not about the signing key).
+
+Concretely: $\mathcal{B}_H$ samples $(\mathsf{sk},\mathsf{pk})\gets\mathsf{Kg}(1^\lambda)$, computes $P:=H(\mathsf{pk})$, and runs $\Aq$ with this $P$ and honest signing oracle.
+If $\Aq$ outputs $(\mathsf{pk}^\star,\sigma^\star)$ with $H(\mathsf{pk}^\star)=P$ and $\mathsf{pk}^\star\neq\mathsf{pk}$, then $\mathcal{B}_H$ outputs $\mathsf{pk}^\star$ as a second preimage.
+Therefore $\Prob[\mathsf{bad}] \le \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda)$.
+
+\emph{Reduction model note.}
+$\mathcal{B}_H$ generates its own $(\mathsf{sk},\mathsf{pk})$ rather than receiving $P$ from an external challenger.
+This is a standard-model reduction (not black-box challenger-driven): $\mathcal{B}_H$ knows $\mathsf{pk}$ and can therefore simulate the signing oracle perfectly.
+The reduction is valid because the binding game only requires $\mathcal{B}_H$ to output a second preimage $\mathsf{pk}^\star\neq\mathsf{pk}$ with $H(\mathsf{pk}^\star)=H(\mathsf{pk})$; it does not require $\mathcal{B}_H$ to be ignorant of $\mathsf{pk}$.
+An alternative formulation where $\mathcal{B}_H$ receives $P$ from an external challenger and simulates signing without $\mathsf{sk}$ would require additional assumptions (e.g., a signing oracle from the challenger); we choose the self-generated formulation for simplicity and tightness.
+\end{proof}
+
+\begin{remark}[Binding game model]\label{rem:binding-model}
+The hash binding game $\mathsf{BindH}$ as defined in this paper is a \emph{self-generated challenge} game: the reductor $\mathcal{B}_H$ chooses its own $\mathsf{pk}$ and therefore knows the preimage.
+This is strictly weaker than a game where the challenger provides $P$ and the reductor must find any preimage --- our game only requires finding a \emph{second} preimage.
+The self-generated formulation is the correct model here because:
+(i) the reductor must simulate the signing oracle, which requires $\mathsf{sk}$;
+(ii) the binding property we need is second-preimage resistance (given $\mathsf{pk}$, find $\mathsf{pk}'\neq\mathsf{pk}$ with $H(\mathsf{pk}')=H(\mathsf{pk})$), not collision resistance in general;
+(iii) second-preimage resistance of SHA-256 with 256-bit output provides $2^{128}$ quantum security under Grover, matching the system's target.
+The bound $\Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda)$ should therefore be interpreted as the second-preimage advantage, not the generic collision advantage.
+\end{remark}
+
+\begin{lemma}[Reduction from $G_2$ to EUF-CMA]\label{lem:g2euf}
+\[
+\Prob[G_2=1] \le \Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda).
+\]
+\end{lemma}
+
+\begin{proof}
+In $G_2$, a win requires $\mathsf{pk}^\star=\mathsf{pk}$ (since $\mathsf{pk}^\star\neq\mathsf{pk}$ is aborted) and $\mathsf{Vfy}(\mathsf{pk},m^\star,\sigma^\star)=1$ with $m^\star$ unqueried.
+We construct $\mathcal{B}_{\mathrm{sig}}$ against the EUF-CMA game of $\PQC\textsf{-Sig}$.
+
+$\mathcal{B}_{\mathrm{sig}}$ receives $\mathsf{pk}$ from the EUF-CMA challenger and sets $P:=H(\mathsf{pk})$.
+It gives $P$ to $\Aq$ and forwards signing queries to the EUF-CMA signing oracle.
+When $\Aq$ outputs $(m^\star,w^\star)$, $\mathcal{B}_{\mathrm{sig}}$ parses $w^\star\mapsto(\mathsf{pk}^\star,\sigma^\star)$.
+If $\mathsf{pk}^\star\neq\mathsf{pk}$, $\mathcal{B}_{\mathrm{sig}}$ aborts (this corresponds to the $G_2$ abort).
+Otherwise, $\mathcal{B}_{\mathrm{sig}}$ outputs $(m^\star,\sigma^\star)$ as an EUF-CMA forgery.
+
+The simulation is perfect: $\Aq$'s view is identical to $G_2$.
+The signing oracle is faithfully forwarded.
+$\mathcal{B}_{\mathrm{sig}}$ makes exactly the same number of queries as $\Aq$.
+Therefore $\Prob[G_2=1]\le\Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda)$.
+\end{proof}
+
+\begin{theorem}[Authorization reduction --- full]\label{thm:reduction}
+For any QPT adversary $\Aq$ that wins $\mathsf{AuthBreak}^{\Aq}(\lambda)$ with probability $\epsilon(\lambda)$, there exist QPT adversaries $\mathcal{B}_{\mathrm{sig}}$ and $\mathcal{B}_{H}$ such that:
+\[
+\epsilon(\lambda)\ \le\ \Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda)\ +\ \Adv_{\mathrm{BindH}}^{\mathcal{B}_{H}}(\lambda).
+\]
+Moreover, the reduction is \emph{tight}: $\mathcal{B}_{\mathrm{sig}}$ makes exactly $q$ signing queries if $\Aq$ does, and $\mathcal{B}_H$ runs in time $\mathsf{Time}(\Aq)+O(\lambda)$.
+\end{theorem}
+
+\begin{proof}
+Combining Lemmas~\ref{lem:g0g1},~\ref{lem:g1g2}, and~\ref{lem:g2euf}:
+\[
+\epsilon(\lambda) = \Prob[G_0=1] = \Prob[G_1=1] \le \Prob[G_2=1] + \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda) \le \Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda) + \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda).
+\]
+Tightness follows from the constructions: $\mathcal{B}_{\mathrm{sig}}$ forwards queries one-to-one with no rewinding; $\mathcal{B}_H$ runs $\Aq$ once with $O(\lambda)$ overhead for hashing.
+\end{proof}
+
+\begin{corollary}[PQ outputs are safe if assumptions hold]
+If $\PQC\textsf{-Sig}$ is EUF-CMA secure against QPT adversaries and $H$ is binding against QPT adversaries (with 256-bit output for post-Grover margin), then $\Adv_{\mathrm{Auth}}^{\Aq}(\lambda)$ is negligible for all $\Aq\in\QPT$.
+\end{corollary}
+
+\subsection{Tightness and concrete security}\label{sec:tightness}
+
+The reduction above is tight in the sense that no security is lost in the game transitions: $\mathcal{B}_{\mathrm{sig}}$ does not guess or rewind, and $\mathcal{B}_H$ runs $\Aq$ exactly once.
+This means the concrete security of the PQ authorization scheme is:
+\[
+\epsilon_{\mathrm{system}}(\lambda) \le \epsilon_{\mathrm{sig}}(\lambda) + \epsilon_{\mathrm{hash}}(\lambda),
+\]
+where $\epsilon_{\mathrm{sig}}$ and $\epsilon_{\mathrm{hash}}$ are the concrete advantages against the signature scheme and hash function, respectively.
+
+\paragraph{Impact of Grover's algorithm.}
+Grover's algorithm~\cite{grover1996fast} provides a quadratic speedup for unstructured search.
+For a hash function with $n$-bit output, the best generic quantum preimage attack requires $O(2^{n/2})$ queries~\cite{zalka1999grover}.
+With $n=256$ (SHA-256), this yields $\sim 2^{128}$ quantum security --- matching the post-quantum security target.
+For the signature scheme, ML-DSA (FIPS~204) at security level~2 targets $\ge 128$ bits of quantum security~\cite{fips204}; SLH-DSA (FIPS~205) at equivalent parameters provides comparable margins~\cite{fips205}.
+
+\paragraph{Concrete parameter guidance.}
+A deployment must ensure:
+\begin{itemize}[leftmargin=2em]
+  \item $\epsilon_{\mathrm{sig}}(\lambda) \le 2^{-128}$ under QPT adversaries (NIST Level~1 or above);
+  \item $\epsilon_{\mathrm{hash}}(\lambda) \le 2^{-128}$ for second-preimage resistance under Grover (satisfied by SHA-256 with 256-bit output);
+  \item combined: $\epsilon_{\mathrm{system}} \le 2^{-127}$, which is negligible for any practical $\lambda$.
+\end{itemize}
+
+\subsection{Quantum random oracle model considerations}\label{sec:qrom}
+
+The reduction in Section~\ref{sec:theorems} treats $H$ as a classical oracle: the reductions $\mathcal{B}_{\mathrm{sig}}$ and $\mathcal{B}_H$ evaluate $H$ on classical inputs.
+In the quantum random oracle model (QROM)~\cite{boneh2011random}, the adversary $\Aq$ may query $H$ in superposition, which affects the feasibility of certain proof techniques.
+
+\paragraph{Impact on the binding transition ($G_1 \to G_2$).}
+The transition relies on extracting a second preimage when $\mathsf{bad}$ is set.
+In the classical ROM, this is straightforward: the reductor observes $\mathsf{pk}^\star$ in the clear.
+In the QROM, if $\Aq$ computes $H(\mathsf{pk}^\star)$ via a quantum query, the reductor cannot directly observe the query input without disturbing the state.
+However, our construction does \emph{not} require online extraction from hash queries.
+The reductor only needs to inspect $\Aq$'s \emph{final classical output} $(\mathsf{pk}^\star,\sigma^\star)$, which is a classical string.
+The check $H(\mathsf{pk}^\star)=P$ with $\mathsf{pk}^\star\neq\mathsf{pk}$ is performed on this classical output.
+Therefore, the $G_1\to G_2$ transition does not require quantum query recording or the compressed oracle technique; it remains valid in the QROM.
+
+\paragraph{Impact on the EUF-CMA reduction ($G_2$).}
+The reduction $\mathcal{B}_{\mathrm{sig}}$ forwards signing queries and inspects the final output.
+If $\PQC\textsf{-Sig}$ is proven EUF-CMA secure in the QROM (as ML-DSA and SLH-DSA are designed to be~\cite{fips204,fips205}), then $\mathcal{B}_{\mathrm{sig}}$'s advantage bound carries over directly.
+
+\paragraph{Summary.}
+The reduction is valid in the QROM without modification, because:
+(i) extraction occurs on classical outputs, not quantum query transcripts;
+(ii) the hash oracle is only programmed implicitly (no reprogramming is needed);
+(iii) the signature scheme's QROM security is assumed.
+Crucially, our proof design avoids both oracle reprogramming and rewinding --- two techniques that are known to be non-trivial or impossible in the QROM~\cite{boneh2011random,zhandry2012how}.
+This is a deliberate architectural choice: by structuring the spend predicate as hash-then-verify (commit to $H(\mathsf{pk})$, reveal $\mathsf{pk}$ in the witness), we ensure that the reduction only needs to inspect classical outputs, sidestepping the fundamental difficulties of quantum query extraction.
+This construction is deliberately QROM-friendly: it avoids oracle programmability entirely, making the proof structure robust against the known barriers to QROM security (measurement disturbance, lack of extractability from superposition queries).
+If future analysis reveals a gap in the QROM security of a specific $\PQC\textsf{-Sig}$ candidate, the reduction's validity depends on that scheme's QROM proof, not on our game-hopping structure.
+For a comprehensive treatment of random oracles under quantum access, see Boneh et al.~\cite{boneh2011random} and Zhandry~\cite{zhandry2012how}.
+
+\section{Network Model Implications: Ordering, Reorgs, and Races}\label{sec:network}
+
+\subsection{Replay and cross-input attacks}\label{sec:replay}
+
+The authorization game (Definition~\ref{def:authbreak}) covers single-output forgery.
+A complete treatment must also exclude witness replay across inputs and across transactions.
+We define two additional games and show they reduce to the sighash commitment property (Definition~\ref{def:sighash-commit}).
+
+\begin{definition}[Cross-input replay game]\label{def:cross-input}
+The game $\mathsf{CrossInput}^{\Aq}(\lambda)$ is:
+\begin{enumerate}[leftmargin=2em]
+  \item Challenger samples $(\mathsf{sk},\mathsf{pk})\gets\mathsf{Kg}(1^\lambda)$, sets $P:=H(\mathsf{pk})$.
+  \item Challenger creates a transaction $tx$ with two inputs $i\neq j$, both spending outputs locked to $P$, and provides $\Aq$ with a valid witness $w_i$ for input $i$.
+  \item $\Aq$ wins if it produces a valid witness $w_j$ for input $j$ without querying the signing oracle on $m_j:=\Sighash(tx,j,\textsf{ctx})$.
+\end{enumerate}
+\end{definition}
+
+\begin{lemma}[Cross-input replay is infeasible]\label{lem:cross-input}
+Under the sighash commitment property (Definition~\ref{def:sighash-commit}) and EUF-CMA security of $\PQC\textsf{-Sig}$:
+\[
+\Prob[\mathsf{CrossInput}^{\Aq}(\lambda)=1] \le \Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda).
+\]
+\end{lemma}
+
+\begin{proof}
+By the cross-input separation property of $\Sighash$ (Definition~\ref{def:sighash-commit}, item~2), $m_i\neq m_j$.
+Therefore a valid signature $\sigma_i$ on $m_i$ is not a valid signature on $m_j$ (except with negligible probability under EUF-CMA).
+Any witness $w_j$ that passes verification must contain a fresh signature on $m_j$, which constitutes an EUF-CMA forgery if $m_j$ was not queried.
+\end{proof}
+
+\begin{definition}[Cross-transaction replay game]\label{def:cross-tx}
+The game $\mathsf{CrossTx}^{\Aq}(\lambda)$ is:
+\begin{enumerate}[leftmargin=2em]
+  \item Challenger samples $(\mathsf{sk},\mathsf{pk})\gets\mathsf{Kg}(1^\lambda)$, sets $P:=H(\mathsf{pk})$.
+  \item Challenger creates transaction $tx$ spending an output locked to $P$ at input $i$, and provides $\Aq$ with the valid witness $w$.
+  \item $\Aq$ constructs a different transaction $tx'\neq tx$ with an input $i'$ spending an output locked to $P$.
+  \item $\Aq$ wins if $w$ is a valid witness for input $i'$ of $tx'$ without querying the signing oracle on $m':=\Sighash(tx',i',\textsf{ctx})$.
+\end{enumerate}
+\end{definition}
+
+\begin{lemma}[Cross-transaction replay is infeasible]\label{lem:cross-tx}
+Under the sighash injectivity property (Definition~\ref{def:sighash-commit}, item~1) and EUF-CMA security of $\PQC\textsf{-Sig}$:
+\[
+\Prob[\mathsf{CrossTx}^{\Aq}(\lambda)=1] \le \Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda).
+\]
+\end{lemma}
+
+\begin{proof}
+By sighash injectivity, $tx\not\equiv_{\mathrm{cs}} tx'$ implies $m:=\Sighash(tx,i,\textsf{ctx})\neq\Sighash(tx',i',\textsf{ctx})=:m'$ (for any $i,i'$).
+The witness $w$ contains a signature valid under message $m$.
+For $w$ to also be valid under $m'$, the signature must verify on a distinct message, which is an EUF-CMA forgery.
+\end{proof}
+
+\begin{theorem}[Complete authorization security]\label{thm:complete-auth}
+Under the sighash commitment property, EUF-CMA security of $\PQC\textsf{-Sig}$ against QPT adversaries, and hash binding of $H$ against QPT adversaries, the PQ spend predicate resists:
+\begin{enumerate}[leftmargin=2em]
+  \item direct forgery (Theorem~\ref{thm:reduction});
+  \item cross-input witness replay (Lemma~\ref{lem:cross-input});
+  \item cross-transaction witness replay (Lemma~\ref{lem:cross-tx}).
+\end{enumerate}
+The combined advantage is bounded by:
+\[
+\Adv_{\mathrm{total}}^{\Aq}(\lambda) \le 3\cdot\Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda) + \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda).
+\]
+\end{theorem}
+
+\subsection{Network-level authorization resilience}
+
+The authorization reduction above is consensus-local: it says that if a PQ output is spent, the witness cannot be forged except by breaking primitives.
+However, Bitcoin users do not interact with $\DeltaBlk$ directly; they broadcast transactions into a hostile network.
+
+We now formalize the connection between network execution and authorization safety.
+
+\begin{definition}[Execution trace]\label{def:trace}
+An execution trace is a sequence
+\[
+\tau = (U_0 \xrightarrow{B_1} U_1 \xrightarrow{B_2} U_2 \xrightarrow{B_3} \cdots),
+\]
+where $U_0$ is the genesis UTXO set and each transition satisfies $\ValidBlk(U_{t-1},B_t)=1$ and $U_t=\DeltaBlk(U_{t-1},B_t)$.
+We write $\tau[0..t]$ for the prefix up to state $U_t$.
+\end{definition}
+
+\begin{definition}[Network-valid trace]\label{def:net-trace}
+A trace $\tau$ is \emph{network-valid} under scheduler $\mathsf{Sched}$ and adversary $\Aq$ with network control $\mathsf{NetCtl}$ if:
+\begin{enumerate}[leftmargin=2em]
+  \item each block $B_t$ is delivered according to $\mathsf{Sched}$ (possibly with adversarial delay);
+  \item $\Aq$ may inject transactions into any block $B_t$ (subject to $\ValidBlk$);
+  \item $\Aq$ may observe mempool contents and inject conflicting transactions;
+  \item chain selection follows the longest-chain rule (or heaviest-chain variant).
+\end{enumerate}
+\end{definition}
+
+\begin{definition}[Unauthorized spend in network trace]\label{def:unauthorized}
+A transaction $tx\in B_t$ in a network-valid trace contains an unauthorized spend if $\Unauthorized(U_{t-1},tx)$ (Definition~\ref{def:unauthorized-compact}).
+In the context of the authorization break game, this means the witness for at least one input constitutes a winning output in $\mathsf{AuthBreak}$ (Definition~\ref{def:authbreak}): the entity producing the witness was not given $\mathsf{sk}$ and did not obtain a signature on the relevant sighash from $\mathsf{Sign}(\mathsf{sk},\cdot)$.
+\end{definition}
+
+\begin{theorem}[Network-resilient authorization safety]\label{thm:net-safety}
+Let $\tau$ be any network-valid trace under QPT adversary $\Aq$.
+If every spendable output in every reachable state $U_t$ is PQ-locked (i.e., its spend predicate is $\SpendPredPQ$), then for all prefixes $\tau[0..t]$:
+\[
+\Prob[\text{unauthorized spend in }\tau[0..t]] \le t\cdot k_{\max}\cdot n_{\max}\cdot\bigl(\Adv_{\mathrm{EUF\mbox{-}CMA}}^{\mathcal{B}_{\mathrm{sig}}}(\lambda) + \Adv_{\mathrm{BindH}}^{\mathcal{B}_H}(\lambda)\bigr),
+\]
+where $k_{\max}$ is the maximum number of transactions per block and $n_{\max}$ is the maximum number of inputs per transaction.
+\end{theorem}
+
+\begin{proof}
+Each input of each transaction in each block is independently validated by $\ValidTx$ via $\textsf{WitnessOK}$.
+By Theorem~\ref{thm:reduction}, each individual input's witness can only be forged with advantage at most $\Adv_{\mathrm{EUF\mbox{-}CMA}} + \Adv_{\mathrm{BindH}}$.
+A union bound over all inputs (at most $n_{\max}$ per transaction), all transactions (at most $k_{\max}$ per block), and all blocks (at most $t$) yields the stated bound.
+Since both advantages are negligible and $t$, $k_{\max}$, $n_{\max}$ are polynomial, the total remains negligible.
+
+Crucially, the adversary's network capabilities ($\mathsf{NetCtl}$) --- mempool observation, conflict injection, delay, reorgs --- do not help forge witnesses for PQ-locked outputs.
+The witness must contain a valid PQ signature on the sighash, and the sighash is determined by the transaction the adversary constructs.
+Network control allows the adversary to \emph{choose which transactions to include} but not to \emph{bypass the authorization predicate}.
+\end{proof}
+
+\begin{remark}[Conservatism of the union bound]
+The bound $t\cdot k_{\max}\cdot n_{\max}\cdot(\cdot)$ is a worst-case union bound that treats each input's forgery event as independent.
+In practice, a QPT adversary may correlate attacks across inputs (e.g., reusing intermediate quantum computations) or adapt queries based on observed witnesses.
+However, since each input's sighash is distinct (by the sighash commitment property) and each forgery requires a fresh EUF-CMA break on a distinct message, the union bound remains valid: correlation does not help the adversary produce a valid signature on a message it has not queried.
+Even under correlated or amortized quantum attacks (e.g., reusing intermediate quantum states across inputs), each successful forgery requires a valid signature on a fresh, distinct sighash message; the EUF-CMA game is defined per-message, so amortization does not reduce the per-input advantage.
+Tighter bounds under structured adversaries (e.g., adversaries that control block construction) are a natural refinement but do not affect the negligibility conclusion.
+\end{remark}
+
+\begin{remark}[Block-constructing vs.\ observing adversaries]
+The bound in Theorem~\ref{thm:net-safety} is worst-case: it assumes the adversary controls block construction and can place adversarial transactions in every slot.
+For a weaker adversary that can only observe the mempool and inject conflicting transactions (but does not mine), the effective $k_{\max}$ and $n_{\max}$ are limited to the adversary's own injected transactions, not the entire block.
+Under the Backbone model~\cite{garay2015bitcoin}, an adversary with mining fraction $\beta<1/2$ controls at most a $\beta/(1-\beta)$ fraction of blocks in expectation, tightening the bound to $\approx t\cdot\frac{\beta}{1-\beta}\cdot k_{\max}\cdot n_{\max}\cdot(\cdot)$.
+We state the worst-case bound for generality; the tighter bound follows by substituting the adversary's effective block rate.
+\end{remark}
+
+\begin{remark}
+This theorem does \emph{not} guarantee liveness (honest transactions may be censored or delayed) or protection against reorg-based double-spending of the adversary's own funds.
+It guarantees that the authorization predicate is not the failure point: no network-level attack converts into an authorization break for PQ-locked outputs.
+For liveness and chain quality under bounded adversarial mining power, we rely on Backbone-style results~\cite{garay2015bitcoin,pass2017analysis}.
+\end{remark}
+
+Two network-level facts remain relevant for legacy (non-PQ) outputs:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Exposure-to-confirmation windows} create theft races for schemes where the verifier/secret becomes computable after observation (secp256k1 under Shor).
+  \item \textbf{Reorgs and censorship} affect liveness and the reliability of migration strategies.
+\end{enumerate}
+Backbone-style results~\cite{garay2015bitcoin} provide a framework to state conditions under which honest transactions are eventually included (liveness) and honest views have common prefix (safety).
+Protocol-level quantum safety requires that the \emph{authorization predicate} is not the point of failure under those executions.
+
+\section{Migration Model and the Liveness--Safety Dilemma}\label{sec:migration}
+
+The hard part is not defining PQ outputs.
+The hard part is the existing $\UTXO$ set: legacy outputs do not commit to PQ verifiers.
+There is no cryptographic ``reinterpretation'' that turns a secp256k1-locked output into a PQ-locked output without the owner's participation.
+
+\subsection{Migration transactions and traces}
+
+\begin{definition}[Migration transaction]
+A transaction $tx$ is a \emph{migration transaction} if:
+\begin{enumerate}[leftmargin=2em]
+  \item at least one input spends a legacy (non-PQ) output;
+  \item all outputs are PQ-locked (their spend predicates are $\SpendPredPQ$).
+\end{enumerate}
+\end{definition}
+
+\begin{definition}[PQ fraction]
+For a UTXO set $U$, define the \emph{PQ fraction} as:
+\[
+\rho(U) := \frac{|\{op\in\dom(U) : \text{output at }op\text{ is PQ-locked}\}|}{|\dom(U)|}.
+\]
+\end{definition}
+
+\begin{definition}[Migration trace]
+A migration trace is an execution trace $\tau=(U_0,B_1,U_1,\dots)$ in which honest participants broadcast migration transactions.
+We say $\tau$ is \emph{honest-migration} if no honest participant creates new legacy outputs after the migration announcement height $H_a$.
+\end{definition}
+
+\begin{proposition}[Migration monotonicity]\label{prop:migration-mono}
+In an execution trace where consensus rules reject the creation of legacy outputs after the migration announcement height $H_a$ (i.e., $\ValidBlk$ requires all new outputs in blocks $>H_a$ to be PQ-locked), the PQ fraction is monotonically non-decreasing:
+\[
+\forall t' > t \ge H_a:\quad \rho(U_{t'}) \ge \rho(U_t).
+\]
+\end{proposition}
+
+\begin{proof}
+After $H_a$, $\ValidBlk$ rejects any transaction that creates a legacy output.
+Therefore every new output in $\dom(U_{t+1})\setminus\dom(U_t)$ is PQ-locked.
+Legacy outputs can only leave $\dom(U)$ by being spent (migrated or otherwise); they are never created.
+Let $L_t:=|\{op\in\dom(U_t):\text{legacy}\}|$ and $Q_t:=|\{op\in\dom(U_t):\text{PQ}\}|$.
+In each block after $H_a$: $L_{t+1}\le L_t$ (legacy count can only decrease or stay) and new PQ outputs are added.
+Therefore $\rho(U_{t+1})=Q_{t+1}/(L_{t+1}+Q_{t+1})\ge Q_t/(L_t+Q_t)=\rho(U_t)$.
+\end{proof}
+
+\begin{remark}
+The monotonicity guarantee is enforced by consensus, not by honest behavior.
+Even an adversarial miner cannot create legacy outputs after $H_a$, because $\ValidBlk$ would reject the block.
+This is strictly stronger than the behavioral assumption in earlier drafts.
+Under partial deployment (e.g., a soft fork not yet activated by all miners), non-upgraded miners may produce blocks containing legacy outputs that upgraded nodes reject.
+In this case, monotonicity holds on the chain viewed by upgraded nodes; non-upgraded nodes see a different chain.
+The structural result (monotonicity under full consensus adoption) is unaffected; partial deployment weakens the operational guarantee but not the formal property.
+\end{remark}
+
+\subsection{States, transformation, and cutover}
+Let $U_0$ be the current UTXO set.
+Let $U_{\mathrm{PQ}}$ denote a UTXO set where every spendable output is PQ-locked.
+Migration is not a single function applied once; it is a sequence of on-chain transitions that induces a partial transformation:
+\[
+\Phi:\ U_0 \rightsquigarrow U_{\mathrm{PQ}}.
+\]
+
+To eliminate ECDLP from the consensus attack surface, the protocol must eventually enforce a cutover height $H_c$ such that, for blocks beyond $H_c$, legacy spend predicates are rejected:
+\[
+\forall \text{inputs in blocks } > H_c:\quad \SpendPred \equiv \SpendPredPQ.
+\]
+This can be expressed as a consensus restriction (soft-fork style), but it has a consequence: any unmigrated legacy output becomes unspendable after $H_c$.
+
+\begin{definition}[Migration completeness]
+Migration is \emph{complete} at height $H_c$ if $\rho(U_{H_c})=1$, i.e., every output in the UTXO set is PQ-locked.
+Migration is \emph{incomplete} if $\rho(U_{H_c})<1$, meaning some legacy outputs remain.
+\end{definition}
+
+\subsection{Unavoidable trade-off}
+
+\begin{theorem}[No-Free-Migration]\label{thm:no-free-migration}
+Under cryptographic-only authorization (no external trust assumptions such as social recovery, multisig escrow with trusted parties, or covenant-based recovery requiring protocol extensions beyond $\SpendPredPQ$ and $\SpendPredEC$), there exists no protocol transition $\Phi$ that simultaneously:
+\begin{enumerate}[leftmargin=2em]
+  \item preserves authorization integrity against QPT adversaries for all outputs (safety);
+  \item preserves spendability for all outputs including those with irrecoverably lost keys (liveness).
+\end{enumerate}
+Formally: $\neg\exists\,\Phi$ such that $\forall\, op\in\dom(U_0)$, both $\textsf{AuthIntegrity}(\Phi,op)$ and $\textsf{Spendable}(\Phi,op)$ hold under Shor, where authorization is determined solely by cryptographic witness verification.
+\end{theorem}
+
+\begin{proof}
+Immediate from Theorem~\ref{thm:dilemma} below: for any lost-key output, safety and liveness are mutually exclusive under cryptographic-only authorization.
+Since at least one lost-key output exists, no $\Phi$ can satisfy both properties universally.
+\end{proof}
+
+\begin{remark}
+The restriction to cryptographic-only authorization is essential.
+Mechanisms that introduce external trust assumptions (e.g., social recovery via a quorum of trusted parties, or time-locked covenants that transfer control to a recovery entity) can in principle break the dilemma --- but they do so by weakening the authorization model, not by solving the cryptographic problem.
+Such mechanisms are outside the scope of this paper's consensus-level analysis.
+\end{remark}
+
+\begin{theorem}[Lost keys force a dilemma]\label{thm:dilemma}
+Assume there exist legacy outputs whose secrets are irrecoverably lost.
+Then under Shor, any protocol evolution that keeps those outputs indefinitely spendable necessarily violates authorization integrity (they become stealable by $\Aq$); conversely, any evolution that enforces protocol-level quantum safety must forfeit liveness for those outputs (they must be frozen/burned).
+\end{theorem}
+
+\begin{proof}
+We prove both directions by contradiction.
+
+\emph{Direction 1: keeping legacy outputs spendable violates safety.}
+Suppose the protocol keeps a legacy output $op$ spendable indefinitely, with spend predicate $\SpendPredEC$ depending on secp256k1 public key $Q$.
+By Theorem~\ref{thm:impossible-ecdlp}, $\Aq$ can compute $d$ from $Q$ via Shor's algorithm and construct a consensus-valid unauthorized spend.
+This directly violates authorization integrity (Definition~\ref{def:unauthorized}).
+
+\emph{Direction 2: enforcing PQ-only predicates forfeits liveness for lost-key outputs.}
+Suppose the protocol enforces $\SpendPred\equiv\SpendPredPQ$ after cutover height $H_c$.
+A legacy output $op$ can only be migrated if its owner produces a valid legacy witness (requiring knowledge of $d$) to spend it into a PQ-locked output.
+If $d$ is irrecoverably lost, no valid legacy witness can be produced before $H_c$.
+After $H_c$, the legacy spend predicate is rejected by consensus.
+Therefore $op$ is permanently unspendable: it cannot be spent via legacy rules (rejected) or via PQ rules (no PQ commitment exists).
+This is a liveness failure for $op$.
+
+Since at least one such lost-key output exists (an empirical fact: early Bitcoin outputs with demonstrably lost keys), the protocol must choose one direction.
+No third option exists: any spend predicate either depends on secp256k1 (vulnerable under Shor) or does not (requiring owner participation to migrate).
+\end{proof}
+
+\begin{remark}
+This is not a policy statement; it is a structural constraint imposed by cryptography and by operational reality (lost keys exist).
+Any proposal that avoids stating which side it chooses is incomplete.
+\end{remark}
+
+\section{Formal Verification Artifacts}\label{sec:formal}
+
+The goal is to produce artifacts that reduce consensus risk, not to ``prove Bitcoin''.
+A credible plan couples an executable model (for counterexample finding) with mechanized semantics (for proof of critical components).
+
+\subsection{TLA+ model of UTXO transitions}
+The minimal TLA+ specification includes explicit $utxo$ state, deterministic transitions, and invariants.
+
+\begin{lstlisting}[caption={TLA+ skeleton: UTXO, validation, and PQ authorization},label={lst:tla}]
+---- MODULE BitcoinPQ ----
+VARIABLES utxo, chain
+
+Init ==
+  /\ utxo = UTXO0
+  /\ chain = << Genesis >>
+
+ValidTx(tx, utxo) ==
+  /\ NoDupInputs(tx)
+  /\ InputsExist(tx, utxo)
+  /\ ValueConservation(tx, utxo)
+  /\ \A i \in Inputs(tx):
+       SpendPredPQ(Lock(utxo[PrevOut(tx,i)]),
+                   Sighash(tx,i),
+                   Wit(tx,i))
+
+Next ==
+  \E blk \in CandidateBlocks:
+    /\ ValidBlock(blk, utxo)
+    /\ utxo' = ApplyBlock(blk, utxo)
+    /\ chain' = Append(chain, blk)
+
+Invariant ==
+  /\ NoDoubleSpend(chain)
+  /\ AuthIntegrityPQ(chain)
+  /\ Determinism(utxo)
+==========================
+\end{lstlisting}
+
+\subsection{Explicit proof obligations}\label{sec:proof-obligations}
+
+We enumerate the concrete proof obligations that a formal verification effort must discharge.
+These serve both as a specification for mechanization and as a checklist for hostile review.
+
+\begin{enumerate}[label=\textbf{PO-\arabic*},leftmargin=3em]
+  \item \textbf{Spend predicate totality:}
+  $\forall P,m,w:\; \SpendPredPQ(P,m,w)\in\{0,1\}$.
+  The predicate never diverges, raises exceptions, or returns $\bot$.
+
+  \item \textbf{Spend predicate determinism:}
+  $\forall P,m,w:\; \SpendPredPQ(P,m,w)$ yields the same result on every evaluation.
+  No dependence on mutable state, randomness, or evaluation order.
+
+  \item \textbf{Witness parsing canonicality:}
+  $\textsf{Parse}:\Witness\to(\mathsf{pk},\sigma)\cup\{\bot\}$ is a total, deterministic, injective function on its accepting domain.
+  No two distinct byte sequences parse to the same $(\mathsf{pk},\sigma)$ pair.
+
+  \item \textbf{Sighash commitment:}
+  The concrete sighash implementation satisfies Definition~\ref{def:sighash-commit} (injectivity, cross-input separation, field coverage).
+
+  \item \textbf{Transition determinism:}
+  $\forall U,tx:\; \ValidTx(U,tx)=1 \Rightarrow \exists!\, U':\; U'=\DeltaTx(U,tx)$.
+
+  \item \textbf{Invariant preservation:}
+  Theorems~\ref{thm:inv-preservation} and~\ref{thm:inv-blk} hold for the concrete instantiation.
+
+  \item \textbf{Cost boundedness:}
+  $\forall tx:\; \ValidTx(U,tx)=1 \Rightarrow \Cost(tx)\le\alpha\cdot\weight(tx)$ for the chosen PQ scheme parameters and the engineering constant $\alpha$.
+
+  \item \textbf{Implementation correspondence:}
+  The mechanized spend predicate is semantically equivalent to the C++/Rust implementation used by consensus nodes.
+\end{enumerate}
+
+\begin{remark}
+PO-1 through PO-5 are amenable to mechanization in Coq or Isabelle~\cite{bertot2004coq,nipkow2002isabelle}.
+PO-6 follows from PO-1 through PO-5 by the proofs in Section~\ref{sec:invariant-preservation}.
+PO-7 requires concrete parameterization (scheme choice, encoding format).
+PO-8 requires extraction or bisimulation against production code and is the most labor-intensive obligation.
+\end{remark}
+
+\subsection{Mechanizing Script/witness semantics}
+Network-level invariants are best explored via model checking, but Script semantics and witness parsing demand mechanization to avoid consensus bugs.
+A pragmatic route is to mechanize the spend predicate and parsing rules in Coq/Isabelle~\cite{bertot2004coq,nipkow2002isabelle}, and prove correspondence against a reference implementation.
+The deliverable is narrow: ``the PQ spend predicate is deterministic, total, and equivalent to the implementation used by nodes''.
+
+\subsection{Model checking scope}
+The TLA+ model (Listing~\ref{lst:tla}) is designed for finite-state exploration with TLC.
+The model should be instantiated with:
+\begin{itemize}[leftmargin=2em]
+  \item a small UTXO set ($|\dom(U_0)|\le 10$);
+  \item bounded transaction and block counts;
+  \item both PQ-locked and legacy outputs (to verify that the migration cutover correctly rejects legacy spends after height $H_c$).
+\end{itemize}
+The invariants to check are $\textsf{NoDoubleSpend}$, $\textsf{StateConsistency}$, $\textsf{Determinism}$, and the migration enforcement predicate.
+Any counterexample found by TLC constitutes a concrete consensus bug.
+
+\section{Engineering Reality and Parameterization}\label{sec:engineering}
+
+Post-quantum signatures are larger and often more expensive to verify.
+This impacts:
+\begin{itemize}[leftmargin=2em]
+  \item block bandwidth (\emph{weight});
+  \item signature verification throughput;
+  \item mempool policy and fee market dynamics;
+  \item hardware requirements for full nodes.
+\end{itemize}
+These are not reasons to avoid quantum safety; they are constraints that must be internalized into the cost model ($\Cost$) and the activation plan (migration windows, enforcement height, and wallet operational invariants).
+
+\subsection{Witness size and verification cost comparison}
+
+Table~\ref{tab:pq-sizes} compares the witness footprint of current and candidate PQ schemes.
+All sizes are approximate and reflect single-signature spending; multisig and threshold constructions multiply accordingly.
+
+\begin{table}[t]
+\centering
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+Scheme & Public key & Signature & Witness total & Security \\
+ & (bytes) & (bytes) & (bytes) & (quantum bits) \\
+\midrule
+ECDSA (secp256k1) & 33 & 72 & $\sim$107 & 0 (broken) \\
+Schnorr (BIP\,340) & 32 & 64 & $\sim$98 & 0 (broken) \\
+\midrule
+ML-DSA-44 (FIPS\,204) & 1{,}312 & 2{,}420 & $\sim$3{,}734 & 128 \\
+ML-DSA-65 (FIPS\,204) & 1{,}952 & 3{,}309 & $\sim$5{,}263 & 192 \\
+SLH-DSA-128s (FIPS\,205) & 32 & 7{,}856 & $\sim$7{,}890 & 128 \\
+SLH-DSA-128f (FIPS\,205) & 32 & 17{,}088 & $\sim$17{,}122 & 128 \\
+\bottomrule
+\end{tabular}
+\caption{Witness sizes for current and post-quantum signature schemes.
+``Witness total'' includes public key, signature, and minimal encoding overhead.
+Quantum security of 0 means the scheme is broken under Shor.
+Sizes for ML-DSA and SLH-DSA are from NIST FIPS\,204 and FIPS\,205~\cite{fips204,fips205}.}
+\label{tab:pq-sizes}
+\end{table}
+
+\paragraph{Weight budget impact.}
+A standard SegWit block has a weight limit of 4\,MWU (4{,}000{,}000 weight units), with witness data discounted at 1\,WU per byte.
+A single ML-DSA-44 witness ($\sim$3.7\,KB) consumes roughly $37\times$ the weight of a Schnorr witness ($\sim$98\,B).
+This reduces the maximum number of single-input, single-output transactions per block from $\sim$10{,}000 (Schnorr) to $\sim$270 (ML-DSA-44) or $\sim$120 (SLH-DSA-128s).
+Batch verification techniques, witness aggregation, or increased block weight limits are engineering levers that affect throughput but do not change the security analysis.
+
+\paragraph{Verification throughput.}
+ML-DSA verification is comparable to Ed25519 in speed ($\sim$10{,}000 verifications/second on commodity hardware).
+SLH-DSA verification is slower ($\sim$1{,}000--3{,}000/s for the ``f'' variants, faster for ``s'' variants).
+The cost function $\Cost(tx)$ must reflect these differences to prevent DoS via blocks filled with expensive-to-verify witnesses.
+
+\section{Related Work}\label{sec:related}
+
+\paragraph{Quantum attacks on Bitcoin.}
+Aggarwal et al.~\cite{aggarwal2018quantum} provide the first systematic analysis of quantum threats to Bitcoin, quantifying the advantage of a quantum miner (via Grover) and the feasibility of key recovery (via Shor) under various timing assumptions.
+Their treatment is primarily quantitative and attack-oriented; it does not formalize consensus as a state machine, define authorization integrity as a game, or address migration.
+Our work complements theirs by providing the formal framework in which their attack scenarios can be stated as theorem violations.
+
+\paragraph{Bitcoin Backbone protocol.}
+Garay, Kiayias, and Leonardos~\cite{garay2015bitcoin} formalize the safety and liveness properties of Nakamoto consensus (common prefix, chain quality, chain growth) under synchronous networks with bounded adversarial mining power.
+Pass, Seeman, and Shelat~\cite{pass2017analysis} extend this to asynchronous settings.
+These results provide the network-level foundation we rely on (Section~\ref{sec:network}), but they do not address the authorization layer: their model assumes honest transaction validity, whereas our contribution is precisely to formalize what ``valid authorization'' means under QPT adversaries and to prove that PQ predicates preserve it.
+
+\paragraph{Post-quantum signature standardization.}
+NIST has standardized ML-DSA (FIPS\,204, lattice-based)~\cite{fips204} and SLH-DSA (FIPS\,205, hash-based)~\cite{fips205} as post-quantum signature schemes.
+Chen et al.~\cite{chen2016report} provide the initial NIST report motivating the transition.
+Our construction is parametric in the choice of $\PQC\textsf{-Sig}$; the security theorems hold for any scheme satisfying EUF-CMA under QPT adversaries.
+
+\paragraph{Quantum random oracle model.}
+Boneh et al.~\cite{boneh2011random} initiated the study of cryptographic security when adversaries can query random oracles in superposition.
+Zhandry~\cite{zhandry2012how} developed techniques for quantum-accessible random functions.
+Boneh and Zhandry~\cite{boneh2013quantum} proved that certain signature schemes remain secure under quantum chosen-message attacks.
+We discuss the QROM implications for our reduction in Section~\ref{sec:qrom}.
+
+\paragraph{Bitcoin-specific PQ proposals.}
+Heilman et al.~\cite{stewart2024great} explore using \texttt{OP\_CAT} to enable Lamport-like signatures within Bitcoin Script, providing a script-level path to quantum resistance without new opcodes.
+BIP-360~\cite{bip393} proposes a ``Pay to Quantum Resistant Hash'' output type.
+These proposals address the construction layer (how to encode PQ witnesses in Bitcoin) but do not provide the formal consensus model, game-based security definitions, invariant preservation proofs, or migration formalization that we contribute.
+
+\paragraph{Shor's algorithm for elliptic curves.}
+Proos and Zalka~\cite{proos2003shor} analyze the concrete quantum circuit complexity of Shor's algorithm applied to elliptic curve groups.
+Roetteler et al.~\cite{roetteler2017quantum} provide refined resource estimates, suggesting that $\sim$2{,}500 logical qubits suffice for 256-bit curves.
+These estimates inform the timeline urgency of migration but do not affect our formal results, which assume Shor is available as a QPT oracle.
+
+\section{Conclusion}
+
+Protocol-level quantum safety is a global safety property of the Bitcoin consensus state machine.
+It cannot be achieved by adding a ``post-quantum opcode'' while leaving secp256k1 spend paths reachable.
+A credible design must (i) specify $\UTXO$ transitions and validation deterministically, (ii) define authorization integrity as a QPT game, (iii) provide a tight reduction from unauthorized spends to PQ signature security and hash binding via explicit game-hopping, (iv) prove that consensus invariants are preserved across all valid transitions, (v) exclude witness replay and cross-input attacks via sighash commitment properties, (vi) model network execution as formal traces and prove that network-level adversarial capabilities do not bypass PQ authorization, (vii) address the quantum random oracle model, (viii) formalize migration with monotonicity guarantees and explicitly choose how to handle unmigrated (including lost-key) outputs, and (ix) enumerate concrete proof obligations for mechanized verification.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

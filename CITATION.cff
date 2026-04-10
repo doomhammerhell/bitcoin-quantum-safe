@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it as below."
+title: "Toward Protocol-Level Quantum Safety in Bitcoin: A Formal, Adversarial, and Invariant-Driven Treatment"
+authors:
+  - family-names: Giovani
+    given-names: Mayckon
+type: article
+date-released: 2026-04-09
+url: "https://github.com/mayckon-giovani/bitcoin-pq-safety"
+keywords:
+  - bitcoin
+  - post-quantum cryptography
+  - formal methods
+  - consensus safety
+  - UTXO model
+  - quantum adversary
+  - game-based security
+  - migration dilemma
+abstract: >-
+  A formal treatment of protocol-level quantum safety in Bitcoin.
+  Specifies the consensus layer as a labeled transition system with
+  explicit UTXO state, total validation predicates, and deterministic
+  transition functions. Defines authorization integrity as a game
+  against quantum polynomial-time adversaries, proves a tight
+  game-hopping reduction from unauthorized spends to PQ signature
+  and hash binding assumptions (valid in the QROM), and formalizes
+  the migration dilemma: protocol-level quantum safety cannot be
+  achieved without either freezing unmigrated legacy outputs or
+  accepting open theft under Shor.
