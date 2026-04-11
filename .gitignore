@@ -67,3 +67,5 @@ _CoqProject.bak
 # === TLA+ ===
 *.toolbox/
 states/
+*_TTrace*
+formal/tla/tla2tools.jar

@@ -69,7 +69,24 @@ make clean
 
 ### TLA+ (`formal/tla/`)
 
-The `BitcoinPQ.tla` specification models UTXO state, transaction/block validation, and PQ authorization as a TLA+ module. Designed for finite-state exploration with TLC. Instantiate with small UTXO sets and bounded transaction counts to check invariants.
+The `BitcoinPQ.tla` specification models UTXO state, transaction validation, and PQ authorization as a TLA+ module. Two configurations are provided:
+
+- `BitcoinPQ.cfg` — checks structural invariants (NoDoubleSpend, ValueBound, StateConsistency). **Result: PASS** (492 states, 260 distinct, zero violations).
+- `BitcoinPQ_Migration.cfg` — checks AuthIntegrityPQ (all outputs PQ-locked after cutover). **Result: VIOLATION FOUND** — TLC produces a concrete counterexample where a legacy output created before the migration announcement survives to the cutover height without being migrated. This is the migration dilemma (Theorem 8 in the paper) demonstrated mechanically.
+
+Requires Java 17+ and `tla2tools.jar` ([download](https://github.com/tlaplus/tlaplus/releases)):
+
+```sh
+cd formal/tla
+# Download tla2tools.jar if not present
+curl -sL -o tla2tools.jar "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
+
+# Check structural invariants (should pass)
+make check
+
+# Check migration safety (should fail — demonstrates the dilemma)
+make check-migration
+```
 
 ### Coq (`formal/coq/`)
 
