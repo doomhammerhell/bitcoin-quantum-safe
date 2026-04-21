@@ -90,7 +90,22 @@ make check-migration
 
 ### Coq (`formal/coq/`)
 
-Planned. The target is mechanization of the PQ spend predicate, witness parsing, and transition determinism (proof obligations PO-1 through PO-5 and PO-8 from the paper).
+Mechanized proofs of the PQ spend predicate properties (PO-1, PO-2, PO-3 from the paper). **All proofs machine-checked with Rocq/Coq 9.1.**
+
+Verified properties:
+- `spend_pred_pq_total` — PO-1: the predicate is total (always returns true or false)
+- `spend_pred_pq_deterministic` — PO-2: same inputs always produce same output
+- `spend_pred_pq_deterministic_ext` — PO-2: extensional determinism
+- `parse_canonical` — PO-3: parse output determines witness content
+- `spend_pred_pq_iff` — complete characterization of acceptance conditions
+
+```sh
+cd formal/coq
+make        # compiles all proofs
+make clean  # removes build artifacts
+```
+
+Requires Rocq/Coq 9.x (or Coq 8.18+).
 
 ### Models (`models/`)
 
