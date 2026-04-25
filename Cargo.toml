@@ -1,0 +1,13 @@
+[package]
+name = "pq-witness-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Bitcoin Post-Quantum Witness Protocol — SegWit v2 with ML-DSA-44 signatures"
+license = "MIT"
+
+[dependencies]
+sha2 = "0.10"
+fips204 = { version = "0.4", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+
+[dev-dependencies]
+proptest = "1.4"
