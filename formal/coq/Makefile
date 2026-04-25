@@ -1,7 +1,7 @@
 COQC = coqc
 COQFLAGS = -Q . BitcoinPQ
 
-SOURCES = SpendPredPQ.v
+SOURCES = SpendPredPQ.v UTXOTransitions.v VarintConcrete.v
 OBJECTS = $(SOURCES:.v=.vo)
 
 .PHONY: all clean
