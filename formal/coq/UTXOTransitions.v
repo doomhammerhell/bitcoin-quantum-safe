@@ -1,5 +1,7 @@
 (** * UTXOTransitions: Mechanized UTXO Transition System
 
+    Copyright (c) 2026 Mayckon Giovani. MIT License.
+
     Corresponds to proof obligations PO-5 (transition determinism) and
     PO-7 (cost boundedness) from the paper "Toward Protocol-Level
     Quantum Safety in Bitcoin".

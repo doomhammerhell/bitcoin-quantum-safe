@@ -1,5 +1,7 @@
 (** * SpendPredPQ: Mechanized PQ Spend Predicate
     
+    Copyright (c) 2026 Mayckon Giovani. MIT License.
+    
     Corresponds to proof obligations PO-1, PO-2, PO-3 from the paper
     "Toward Protocol-Level Quantum Safety in Bitcoin".
     

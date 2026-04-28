@@ -1112,7 +1112,7 @@ TLC exhaustively explored 492 states (260 distinct) to depth 8 with \textbf{zero
 \paragraph{Model 2: multi-input transactions with value conservation (\texttt{BitcoinPQMulti.tla}).}
 The extended model strengthens PO-6 by supporting multi-input (1--2 inputs) and multi-output (1--2 outputs) transactions with explicit value conservation ($\sum\textsf{inputs} \ge \sum\textsf{outputs}$, with the difference as fee), freeze enforcement after cutover, and a $\textsf{MigrationMonotonicity}$ invariant that tracks the PQ fraction $\rho(U_t)$ as a state variable and verifies it is non-decreasing after the announcement height.
 The model was instantiated with 3 genesis outputs (total value 4), outpoint universe of size 8, migration announcement at height 1, and cutover at height 3.
-TLC checks four invariants ($\textsf{NoDoubleSpend}$, $\textsf{ValueBound}$, $\textsf{StateConsistency}$, $\textsf{MigrationMonotonicity}$) plus the temporal property $\textsf{PQFracNonDecreasing}$.
+TLC exhaustively explored \textbf{58{,}237 states (6{,}365 distinct)} to depth 10 with \textbf{zero violations} of all four invariants ($\textsf{NoDoubleSpend}$, $\textsf{ValueBound}$, $\textsf{StateConsistency}$, $\textsf{MigrationMonotonicity}$).
 
 \paragraph{Result 1: structural invariants.}
 Both models confirm zero violations of all structural invariants across every reachable state.
@@ -1164,10 +1164,14 @@ Properties proved:
   The stronger result \texttt{cost\_equals\_weight} proves exact equality: $\Cost(tx) = \weight(tx)$ for the SegWit witness discount model, with cost constants matching the implementation (input overhead 144\,WU, base overhead 40\,WU, per-output 164\,WU).
 \end{itemize}
 
-\paragraph{Module 3: varint axiom consistency (\texttt{VarintConcrete.v}).}
-This module provides a concrete varint implementation (single-byte encoding) and proves that all 6 varint axioms from \texttt{SpendPredPQ.v} are satisfied, establishing that the axiom system is consistent (not vacuously true).
-The proofs are packaged as a \texttt{VarintAxioms} record, and a concrete witness round-trip is proved (\texttt{parse\_serialize\_concrete\_round\_trip}).
-This addresses PO-8 at the axiom level: the abstract interface has at least one correct implementation.
+\paragraph{Module 3: varint axiom discharge with Bitcoin compact-size encoding (\texttt{VarintConcrete.v}).}
+This module provides a concrete implementation of Bitcoin's compact-size varint encoding --- the actual multi-byte format used in the Rust implementation --- and proves that all 6 varint axioms from \texttt{SpendPredPQ.v} are satisfied.
+The encoding covers two cases: $n \le 252$ maps to $[n]$ (1 byte); $253 \le n \le 65535$ maps to $[253;\; n \bmod 256;\; n / 256]$ (3 bytes, little-endian u16).
+The decoding function enforces canonicality: it rejects non-minimal encodings (e.g., using the 3-byte prefix for values that fit in 1 byte).
+The key proof technique for canonicality (Axiom~5) uses $\textsf{Nat.Div0.mod\_add}$ and $\textsf{Nat.div\_add}$ to show that $(lo + hi \cdot 256) \bmod 256 = lo$ and $(lo + hi \cdot 256) / 256 = hi$ when $lo < 256$, establishing that the decoded prefix equals the canonical encoding.
+The proofs are packaged as a \texttt{VarintAxioms} record.
+Additionally, the module includes \textbf{golden test vectors} generated via \texttt{Compute} that are verified byte-for-byte against the Rust implementation (including the ML-DSA-44 public key length 1{,}312 and signature length 2{,}420).
+This addresses PO-8 at the encoding level: the Coq model uses the same multi-byte varint format as the Rust code, and the golden vectors provide concrete correspondence evidence.
 
 \subsection{Proof obligations: status}\label{sec:proof-obligations}
 
@@ -1186,7 +1190,7 @@ PO-4 & Sighash commitment & \textbf{Executable evidence} & Rust PBT (9 property 
 PO-5 & Transition determinism & \textbf{Verified} & Coq (\texttt{UTXOTransitions.v}) \\
 PO-6 & Invariant preservation & \textbf{Model-checked} & TLA+/TLC (2 models) \\
 PO-7 & Cost boundedness & \textbf{Verified} & Coq (\texttt{UTXOTransitions.v}) \\
-PO-8 & Implementation correspondence & \textbf{Partial} & Coq (\texttt{VarintConcrete.v}) + Rust PBT \\
+PO-8 & Implementation correspondence & \textbf{Strong evidence} & Coq (\texttt{VarintConcrete.v}) + Rust PBT \\
 \bottomrule
 \end{tabular}
 \caption{Status of proof obligations.
@@ -1194,7 +1198,8 @@ PO-8 & Implementation correspondence & \textbf{Partial} & Coq (\texttt{VarintCon
 ``Verified (strengthened)'' = machine-checked proof that is strictly stronger than the original obligation (full witness identity rather than region matching).
 ``Model-checked'' = exhaustively verified by TLC over finite state space.
 ``Executable evidence'' = property-based tests verifying the property across hundreds of randomly generated inputs.
-``Partial'' = axiom consistency proved in Coq; implementation correspondence verified by property-based tests but not by extraction or bisimulation.}
+``Partial'' = axiom consistency proved in Coq; implementation correspondence verified by property-based tests but not by extraction or bisimulation.
+``Strong evidence'' = concrete multi-byte varint model in Coq matches the Rust implementation byte-for-byte (golden test vectors); all axioms proved for the concrete model; 19 Rust property-based tests verify each Coq theorem holds in the implementation; full extraction/bisimulation remains as future work.}
 \label{tab:po-status}
 \end{table}
 
@@ -1204,8 +1209,8 @@ The Coq development covers the PQ spend predicate with varint-based witness enco
 The varint axiom system is proved consistent by a concrete implementation (\texttt{VarintConcrete.v}).
 PO-4 (sighash commitment) is supported by executable evidence: a \texttt{verify\_sighash\_commitment\_property} function that programmatically checks injectivity, cross-input separation, and field coverage for any transaction, plus 9 property-based tests exercising these properties across hundreds of randomly generated transactions with BIP\,340-style tagged hashes for domain separation.
 The remaining gap is PO-8 (full implementation correspondence): establishing a formal bisimulation between the Coq model and the Rust implementation.
-The current evidence for PO-8 consists of (i) axiom consistency proved in Coq, (ii) 16 Rust property-based tests that verify each Coq theorem holds in the implementation, and (iii) 3 adversarial boundary tests that exercise the security properties from Theorems~\ref{thm:reduction} and~\ref{thm:complete-auth} (commitment second-preimage resistance, cross-input replay resistance, cross-transaction replay resistance).
-Full PO-8 closure would require Coq extraction to Rust or a verified translation --- a substantial but well-scoped effort that builds on the foundation established here.
+The current evidence for PO-8 consists of (i) all 6 varint axioms proved for a concrete multi-byte encoding in Coq that uses the same Bitcoin compact-size format as the Rust code, (ii) golden test vectors generated by Coq \texttt{Compute} and verified byte-for-byte against the Rust implementation (including ML-DSA-44 key/signature lengths), (iii) 19 Rust property-based tests that verify each Coq theorem holds in the implementation, and (iv) 3 adversarial boundary tests that exercise the security properties from Theorems~\ref{thm:reduction} and~\ref{thm:complete-auth} (commitment second-preimage resistance, cross-input replay resistance, cross-transaction replay resistance).
+Full PO-8 closure would require Coq extraction to OCaml/Rust or a verified translation --- a substantial but well-scoped effort that builds on the foundation established here.
 
 \section{Engineering Reality and Parameterization}\label{sec:engineering}
 
@@ -1298,7 +1303,7 @@ It cannot be achieved by adding a ``post-quantum opcode'' while leaving secp256k
 A credible design must (i) specify $\UTXO$ transitions and validation deterministically, (ii) define authorization integrity as a QPT game, (iii) provide a tight reduction from unauthorized spends to PQ signature security and hash binding via explicit game-hopping, (iv) prove that consensus invariants are preserved across all valid transitions, (v) exclude witness replay and cross-input attacks via sighash commitment properties, (vi) model network execution as formal traces and prove that network-level adversarial capabilities do not bypass PQ authorization, (vii) address the quantum random oracle model, (viii) formalize migration with monotonicity guarantees and explicitly choose how to handle unmigrated (including lost-key) outputs, and (ix) discharge proof obligations via mechanized verification.
 
 This paper addresses all nine requirements.
-The formal artifacts --- TLC model checking of UTXO transitions (two models: single-input and multi-input with value conservation; zero structural invariant violations; concrete migration dilemma counterexample), Coq-mechanized proofs of spend predicate totality, determinism, and parse canonicality (strengthened to full witness identity via varint-based encoding), Coq-mechanized proofs of transition determinism (PO-5) and cost boundedness with exact weight equality (PO-7), a concrete varint implementation proving axiom consistency (PO-8 foundation), and a reference implementation in Rust with FIPS\,204 ML-DSA-44 signatures, 25 property-based tests covering all 16 correctness properties plus 9 sighash commitment tests, and 3 adversarial boundary tests --- provide machine-checked and empirically validated evidence that the framework is not merely described but verified.
+The formal artifacts --- TLC model checking of UTXO transitions (two models: single-input with 492 states and multi-input with 58{,}237 states and value conservation; zero structural invariant violations; concrete migration dilemma counterexample in both models), Coq-mechanized proofs of spend predicate totality, determinism, and parse canonicality (strengthened to full witness identity via axiomatized varint model with concrete Bitcoin compact-size discharge and golden test vectors), Coq-mechanized proofs of transition determinism (PO-5) and cost boundedness with exact weight equality (PO-7), and a reference implementation in Rust with FIPS\,204 ML-DSA-44 signatures, 25 property-based tests covering all 16 correctness properties plus 9 sighash commitment tests, 19 PO-8 correspondence tests with golden vectors, and 3 adversarial boundary tests --- provide machine-checked and empirically validated evidence that the framework is not merely described but verified.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}

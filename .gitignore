@@ -28,6 +28,10 @@
 *.spl
 *.xdv
 
+# === Rust build artifacts ===
+/target/
+Cargo.lock
+
 # === Output PDF (build artifact, not source) ===
 paper/*.pdf
 
@@ -40,6 +44,7 @@ paper/*.pdf
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+.kiro/
 
 # === Editor / IDE ===
 *.swp

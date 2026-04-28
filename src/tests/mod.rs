@@ -2529,3 +2529,65 @@ fn adversarial_cross_transaction_replay_resistance() {
         "CRITICAL: witness for tx1 must NOT be valid for tx2 (cross-transaction replay)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// PO-8.6: Golden test vectors — Coq ↔ Rust correspondence
+// ---------------------------------------------------------------------------
+//
+// These vectors are produced by `Compute` in formal/coq/VarintConcrete.v
+// and verified here against the Rust implementation. Byte-for-byte match
+// between the Coq model and the Rust code.
+
+#[test]
+fn po8_golden_vectors_encode() {
+    // Coq: Compute (encode_len_multi 0).     = [0]
+    assert_eq!(encode_varint(0), vec![0]);
+    // Coq: Compute (encode_len_multi 42).    = [42]
+    assert_eq!(encode_varint(42), vec![42]);
+    // Coq: Compute (encode_len_multi 252).   = [252]
+    assert_eq!(encode_varint(252), vec![252]);
+    // Coq: Compute (encode_len_multi 253).   = [253; 253; 0]
+    assert_eq!(encode_varint(253), vec![253, 253, 0]);
+    // Coq: Compute (encode_len_multi 256).   = [253; 0; 1]
+    assert_eq!(encode_varint(256), vec![253, 0, 1]);
+    // Coq: Compute (encode_len_multi 1312).  = [253; 32; 5]  — ML-DSA-44 pk_len
+    assert_eq!(encode_varint(1312), vec![253, 32, 5]);
+    // Coq: Compute (encode_len_multi 2420).  = [253; 116; 9] — ML-DSA-44 sig_len
+    assert_eq!(encode_varint(2420), vec![253, 116, 9]);
+    // Coq: Compute (encode_len_multi 65535). = [253; 255; 255]
+    assert_eq!(encode_varint(65535), vec![253, 255, 255]);
+}
+
+#[test]
+fn po8_golden_vectors_decode() {
+    // Coq: Compute (decode_len_multi [0]).             = Some (0, 1)
+    assert_eq!(decode_varint(&[0]), Some((0, 1)));
+    // Coq: Compute (decode_len_multi [42]).            = Some (42, 1)
+    assert_eq!(decode_varint(&[42]), Some((42, 1)));
+    // Coq: Compute (decode_len_multi [252]).           = Some (252, 1)
+    assert_eq!(decode_varint(&[252]), Some((252, 1)));
+    // Coq: Compute (decode_len_multi [253; 253; 0]).   = Some (253, 3)
+    assert_eq!(decode_varint(&[253, 253, 0]), Some((253, 3)));
+    // Coq: Compute (decode_len_multi [253; 0; 1]).     = Some (256, 3)
+    assert_eq!(decode_varint(&[253, 0, 1]), Some((256, 3)));
+    // Coq: Compute (decode_len_multi [253; 32; 5]).    = Some (1312, 3)
+    assert_eq!(decode_varint(&[253, 32, 5]), Some((1312, 3)));
+    // Coq: Compute (decode_len_multi [253; 116; 9]).   = Some (2420, 3)
+    assert_eq!(decode_varint(&[253, 116, 9]), Some((2420, 3)));
+    // Coq: Compute (decode_len_multi [253; 255; 255]). = Some (65535, 3)
+    assert_eq!(decode_varint(&[253, 255, 255]), Some((65535, 3)));
+}
+
+#[test]
+fn po8_golden_vectors_rejection() {
+    // Coq: Compute (decode_len_multi [253; 252; 0]). = None — non-canonical
+    assert_eq!(decode_varint(&[253, 252, 0]), None);
+    // Coq: Compute (decode_len_multi [253; 0; 0]).   = None — non-canonical
+    assert_eq!(decode_varint(&[253, 0, 0]), None);
+    // Coq: Compute (decode_len_multi []).             = None — empty
+    assert_eq!(decode_varint(&[]), None);
+    // Coq: Compute (decode_len_multi [253]).          = None — truncated
+    assert_eq!(decode_varint(&[253]), None);
+    // Coq: Compute (decode_len_multi [253; 0]).       = None — truncated
+    assert_eq!(decode_varint(&[253, 0]), None);
+}

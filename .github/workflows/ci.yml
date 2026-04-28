@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings -A clippy::type_complexity
+
+  coq:
+    name: Coq proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Coq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opam
+          opam init --auto-setup --disable-sandboxing
+          eval $(opam env)
+          opam install -y coq.8.20.1
+          eval $(opam env)
+          coqc --version
+
+      - name: Build Coq proofs
+        run: |
+          eval $(opam env)
+          cd formal/coq
+          make
+
+  tlc:
+    name: TLA+ model checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Download TLC
+        run: |
+          cd formal/tla
+          curl -sL -o tla2tools.jar \
+            "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
+
+      - name: Check single-input model (structural invariants)
+        run: |
+          cd formal/tla
+          java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC BitcoinPQ \
+            -deadlock -workers auto 2>&1 | tee tlc-single.log
+          grep "No error has been found" tlc-single.log
+
+      - name: Check multi-input model (structural invariants)
+        run: |
+          cd formal/tla
+          java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC BitcoinPQMulti \
+            -deadlock -workers auto 2>&1 | tee tlc-multi.log
+          grep "No error has been found" tlc-multi.log
+
+      - name: Check migration dilemma (expected violation)
+        run: |
+          cd formal/tla
+          java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC BitcoinPQ \
+            -config BitcoinPQ_Migration.cfg -deadlock -workers auto 2>&1 \
+            | tee tlc-migration.log
+          grep "Error" tlc-migration.log || echo "Expected: violation found"

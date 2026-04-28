@@ -1,5 +1,7 @@
 ---------------------------- MODULE BitcoinPQ ----------------------------
 (*
+ * Copyright (c) 2026 Mayckon Giovani. MIT License.
+ *
  * TLA+ specification for Bitcoin post-quantum UTXO transitions.
  * Executable model for TLC model checking.
  *

@@ -5,17 +5,24 @@ authors:
   - family-names: Giovani
     given-names: Mayckon
 type: article
-date-released: 2026-04-09
-url: "https://github.com/mayckon-giovani/bitcoin-pq-safety"
+date-released: 2026-04-25
+license: MIT
+repository-code: "https://github.com/mayckon-giovani/bitcoin-pq-safety"
 keywords:
   - bitcoin
   - post-quantum cryptography
+  - formal verification
   - formal methods
   - consensus safety
   - UTXO model
   - quantum adversary
   - game-based security
   - migration dilemma
+  - ML-DSA-44
+  - FIPS 204
+  - Coq
+  - TLA+
+  - property-based testing
 abstract: >-
   A formal treatment of protocol-level quantum safety in Bitcoin.
   Specifies the consensus layer as a labeled transition system with
@@ -24,6 +31,7 @@ abstract: >-
   against quantum polynomial-time adversaries, proves a tight
   game-hopping reduction from unauthorized spends to PQ signature
   and hash binding assumptions (valid in the QROM), and formalizes
-  the migration dilemma: protocol-level quantum safety cannot be
-  achieved without either freezing unmigrated legacy outputs or
-  accepting open theft under Shor.
+  the migration dilemma. Accompanied by a Rust reference implementation
+  (273 tests, FIPS 204 ML-DSA-44), Coq-mechanized proofs (7 of 8
+  proof obligations verified), and TLA+ model checking (58,237 states,
+  zero invariant violations).

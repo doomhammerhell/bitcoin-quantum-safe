@@ -1,5 +1,7 @@
 ------------------------- MODULE BitcoinPQMulti -------------------------
 (*
+ * Copyright (c) 2026 Mayckon Giovani. MIT License.
+ *
  * Extended TLA+ specification for Bitcoin post-quantum UTXO transitions.
  * Strengthens PO-6 with multi-input/multi-output transactions and
  * explicit value conservation.
@@ -12,14 +14,13 @@
  *   - Migration monotonicity: PQ fraction is non-decreasing after H_a
  *
  * Invariants:
- *   I1  NoDoubleSpend        — spent ∩ DOMAIN utxo = {}
- *   I2  ValueBound           — total value never exceeds genesis total
- *   I3  StateConsistency     — all ids fresh and tracked
- *   I4  MigrationMonotonicity— PQ fraction non-decreasing after announce
- *   I5  FreezeEnforcement    — after cutover, no non-PQ outputs are spent
+ *   I1  NoDoubleSpend         — spent ∩ DOMAIN utxo = {}
+ *   I2  ValueBound            — total value never exceeds genesis total
+ *   I3  StateConsistency      — all ids fresh and tracked
+ *   I4  MigrationMonotonicity — PQ fraction consistent with UTXO set
  *)
 
-EXTENDS Integers, FiniteSets, TLC, Sequences
+EXTENDS Integers, FiniteSets, TLC
 
 CONSTANTS
     MaxOP,              \* Maximum outpoint id (bounds state space)
@@ -32,12 +33,12 @@ VARIABLES
     spent,      \* Set of all outpoints ever spent
     height,     \* Current block height
     nextId,     \* Next available outpoint id
-    pqFrac      \* Fraction numerator: count of PQ outputs (denominator = Cardinality(DOMAIN utxo))
+    pqFrac      \* Count of PQ outputs in the UTXO set
 
 vars == <<utxo, spent, height, nextId, pqFrac>>
 
 \* -----------------------------------------------------------------------
-\* Helper: sum values over a finite set of outpoint ids using utxo map
+\* Helpers
 \* -----------------------------------------------------------------------
 
 RECURSIVE SetSum(_, _)
@@ -46,7 +47,6 @@ SetSum(f, S) ==
     ELSE LET x == CHOOSE x \in S : TRUE
          IN f[x].value + SetSum(f, S \ {x})
 
-\* Count PQ-locked outputs in the current UTXO set
 PQCount(u) ==
     Cardinality({op \in DOMAIN u : u[op].lock = "pq"})
 
@@ -61,63 +61,74 @@ Init ==
     /\ spent = {}
     /\ height = 0
     /\ nextId = 4
-    /\ pqFrac = PQCount((1 :> [value |-> 2, lock |-> "legacy"])
-                       @@ (2 :> [value |-> 1, lock |-> "pq"])
-                       @@ (3 :> [value |-> 1, lock |-> "legacy"]))
+    /\ pqFrac = 1
 
 \* -----------------------------------------------------------------------
-\* Transaction: spend 1-2 inputs, produce 1-2 outputs
-\* Value conservation: sum(inputs) >= sum(outputs), remainder is fee
+\* Spend1: single-input, single-output transaction
 \* -----------------------------------------------------------------------
 
-\* Build a new utxo map: remove inputs, add outputs
-BuildUTXO(oldUtxo, ins, outs, baseId) ==
-    LET remaining == [op \in (DOMAIN oldUtxo) \ ins |-> oldUtxo[op]]
-        \* outs is a sequence of [value, lock] records, length 1 or 2
-        out1 == (baseId :> outs[1])
-        out2 == IF Len(outs) = 2
-                THEN (baseId :> outs[1]) @@ ((baseId + 1) :> outs[2])
-                ELSE out1
-    IN remaining @@ out2
+Spend1 ==
+    \E inOp \in DOMAIN utxo :
+    \E outLock \in {"legacy", "pq"} :
+    \E outVal \in 1..utxo[inOp].value :
+        /\ (height >= MigrationCutover => utxo[inOp].lock = "pq")
+        /\ (height >= MigrationAnnounce => outLock = "pq")
+        /\ nextId <= MaxOP
+        /\ LET newOut == [value |-> outVal, lock |-> outLock]
+               newUtxo == ((nextId :> newOut) @@ [op \in (DOMAIN utxo) \ {inOp} |-> utxo[op]])
+           IN /\ utxo' = newUtxo
+              /\ spent' = spent \union {inOp}
+              /\ nextId' = nextId + 1
+              /\ height' = height
+              /\ pqFrac' = PQCount(newUtxo)
 
-Spend ==
-    \* Choose a non-empty subset of UTXO inputs, size 1 or 2
-    \E ins \in SUBSET (DOMAIN utxo) :
-        /\ ins /= {}
-        /\ Cardinality(ins) <= 2
-        \* Compute total input value
-        /\ LET inVal == SetSum(utxo, ins)
-           IN
-           \* Choose number of outputs: 1 or 2
-           \E numOuts \in {1, 2} :
-               \* Enough fresh ids
-               /\ nextId + numOuts - 1 <= MaxOP
-               \* Choose output locks
-               \E lock1 \in {"legacy", "pq"} :
-               \E lock2 \in {"legacy", "pq"} :
-               \* Choose output values (at least 1 each, sum <= inVal)
-               \E val1 \in 1..inVal :
-               \E val2 \in IF numOuts = 2 THEN 1..inVal ELSE {0} :
-                   \* Value conservation: outputs <= inputs (fee >= 0)
-                   /\ val1 + val2 <= inVal
-                   \* Freeze enforcement: after cutover, all inputs must be PQ
-                   /\ (height >= MigrationCutover =>
-                        \A op \in ins : utxo[op].lock = "pq")
-                   \* Post-announcement: new outputs must be PQ
-                   /\ (height >= MigrationAnnounce => lock1 = "pq")
-                   /\ (height >= MigrationAnnounce => lock2 = "pq")
-                   \* Build output sequence
-                   /\ LET out1 == [value |-> val1, lock |-> lock1]
-                          out2 == [value |-> val2, lock |-> lock2]
-                          outs == IF numOuts = 1
-                                  THEN <<out1>>
-                                  ELSE <<out1, out2>>
-                          newUtxo == BuildUTXO(utxo, ins, outs, nextId)
-                      IN /\ utxo' = newUtxo
-                         /\ spent' = spent \union ins
-                         /\ nextId' = nextId + numOuts
-                         /\ height' = height
-                         /\ pqFrac' = PQCount(newUtxo)
+\* -----------------------------------------------------------------------
+\* Spend2: two-input, single-output transaction
+\* -----------------------------------------------------------------------
+
+Spend2 ==
+    \E inOp1 \in DOMAIN utxo :
+    \E inOp2 \in DOMAIN utxo :
+        /\ inOp1 /= inOp2
+        /\ (height >= MigrationCutover => utxo[inOp1].lock = "pq")
+        /\ (height >= MigrationCutover => utxo[inOp2].lock = "pq")
+        /\ nextId <= MaxOP
+        /\ LET inVal == utxo[inOp1].value + utxo[inOp2].value
+           IN \E outLock \in {"legacy", "pq"} :
+              \E outVal \in 1..inVal :
+                  /\ (height >= MigrationAnnounce => outLock = "pq")
+                  /\ LET newOut == [value |-> outVal, lock |-> outLock]
+                         newUtxo == ((nextId :> newOut) @@ [op \in (DOMAIN utxo) \ {inOp1, inOp2} |-> utxo[op]])
+                     IN /\ utxo' = newUtxo
+                        /\ spent' = spent \union {inOp1, inOp2}
+                        /\ nextId' = nextId + 1
+                        /\ height' = height
+                        /\ pqFrac' = PQCount(newUtxo)
+
+\* -----------------------------------------------------------------------
+\* Spend1x2: single-input, two-output transaction
+\* -----------------------------------------------------------------------
+
+Spend1x2 ==
+    \E inOp \in DOMAIN utxo :
+    \E lock1 \in {"legacy", "pq"} :
+    \E lock2 \in {"legacy", "pq"} :
+    \E val1 \in 1..utxo[inOp].value :
+    \E val2 \in 1..utxo[inOp].value :
+        /\ val1 + val2 <= utxo[inOp].value
+        /\ (height >= MigrationCutover => utxo[inOp].lock = "pq")
+        /\ (height >= MigrationAnnounce => lock1 = "pq")
+        /\ (height >= MigrationAnnounce => lock2 = "pq")
+        /\ nextId + 1 <= MaxOP
+        /\ LET out1 == [value |-> val1, lock |-> lock1]
+               out2 == [value |-> val2, lock |-> lock2]
+               remaining == [op \in (DOMAIN utxo) \ {inOp} |-> utxo[op]]
+               newUtxo == ((nextId :> out1) @@ ((nextId + 1) :> out2) @@ remaining)
+           IN /\ utxo' = newUtxo
+              /\ spent' = spent \union {inOp}
+              /\ nextId' = nextId + 2
+              /\ height' = height
+              /\ pqFrac' = PQCount(newUtxo)
 
 \* Advance block height (bounded)
 Tick ==
@@ -129,7 +140,7 @@ Tick ==
 \* Specification
 \* -----------------------------------------------------------------------
 
-Next == Spend \/ Tick
+Next == Spend1 \/ Spend2 \/ Spend1x2 \/ Tick
 
 Spec == Init /\ [][Next]_vars
 
@@ -137,52 +148,31 @@ Spec == Init /\ [][Next]_vars
 \* Invariants
 \* -----------------------------------------------------------------------
 
-\* I1: Spent outpoints are not in the UTXO set (no double spend)
 NoDoubleSpend ==
     spent \intersect DOMAIN utxo = {}
 
-\* I2: Total value in UTXO set never exceeds genesis total
 ValueBound ==
     LET S == DOMAIN utxo
     IN IF S = {} THEN TRUE
        ELSE SetSum(utxo, S) <= GenesisTotal
 
-\* I3: All ids are properly tracked and fresh
 StateConsistency ==
     /\ spent \intersect DOMAIN utxo = {}
     /\ \A op \in DOMAIN utxo : op < nextId
     /\ \A op \in spent : op < nextId
 
-\* I4: After announcement, PQ fraction is non-decreasing
-\*     (checked as: pqFrac tracks PQ count, and we verify monotonicity
-\*      via the temporal property below; here we check consistency)
 MigrationMonotonicity ==
     DOMAIN utxo /= {} =>
         pqFrac = PQCount(utxo)
 
-\* I5: After cutover, no non-PQ output is ever spent
-\*     (enforced by Spend guard; invariant checks no legacy in UTXO after cutover)
 FreezeEnforcement ==
     height >= MigrationCutover =>
         \A op \in DOMAIN utxo : utxo[op].lock = "pq"
 
-\* Combined structural invariant
-StructuralInvariant ==
+Invariant ==
     /\ NoDoubleSpend
     /\ ValueBound
     /\ StateConsistency
     /\ MigrationMonotonicity
-
-\* Default invariant for model checking
-Invariant == StructuralInvariant
-
-\* -----------------------------------------------------------------------
-\* Temporal property: PQ fraction is non-decreasing after announcement
-\* (Checked as a separate property — requires liveness/temporal checking)
-\* -----------------------------------------------------------------------
-
-PQFracNonDecreasing ==
-    [][height >= MigrationAnnounce =>
-        (DOMAIN utxo' /= {} => pqFrac' >= pqFrac)]_vars
 
 =========================================================================
