@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["detached_sign","keypair","open","public_key_bytes","secret_key_bytes","sign","signature_bytes","verify_detached_signature"],"macro":["detached_signature","gen_keypair","gen_signature","open_signed","simple_struct","verify_detached_sig"],"struct":["DetachedSignature","PublicKey","SecretKey","SignedMessage"]};

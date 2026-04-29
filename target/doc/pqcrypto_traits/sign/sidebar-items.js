@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["VerificationError"],"trait":["DetachedSignature","PublicKey","SecretKey","SignedMessage"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["dilithium2","dilithium3","dilithium5","ffi"]};
