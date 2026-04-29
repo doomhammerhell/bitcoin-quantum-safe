@@ -17,10 +17,10 @@
     [src/lib.rs]. The cost model matches [src/weight.rs].
 *)
 
-From Stdlib Require Import Bool.
-From Stdlib Require Import List.
-From Stdlib Require Import PeanoNat.
-From Stdlib Require Import Lia.
+From Coq Require Import Bool.
+From Coq Require Import List.
+From Coq Require Import PeanoNat.
+From Coq Require Import Lia.
 Import ListNotations.
 
 (* ================================================================= *)

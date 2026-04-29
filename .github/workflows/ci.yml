@@ -44,11 +44,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache opam
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam
+          key: ${{ runner.os }}-opam-coq820
+          restore-keys: ${{ runner.os }}-opam-
+
       - name: Install Coq
         run: |
           sudo apt-get update
           sudo apt-get install -y opam
-          opam init --auto-setup --disable-sandboxing
+          opam init --auto-setup --disable-sandboxing || true
           eval $(opam env)
           opam install -y coq.8.20.1
           eval $(opam env)

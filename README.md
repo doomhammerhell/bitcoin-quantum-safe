@@ -88,7 +88,7 @@ This is not a proposal. This is not a BIP. This is a formal framework for reason
 | Tool | Version | Purpose |
 |---|---|---|
 | Rust | 1.70+ | Reference implementation |
-| Rocq/Coq | 9.x (or Coq 8.18+) | Mechanized proofs |
+| Rocq/Coq | 8.18+ or 9.x | Mechanized proofs |
 | Java | 17+ | TLC model checker |
 | TeX Live | 2024+ | Paper compilation |
 
@@ -119,7 +119,7 @@ make
 make clean
 ```
 
-Requires Rocq 9.x. The `VarintConcrete.v` module prints golden test vectors via `Compute` during compilation — these match the Rust implementation byte-for-byte.
+Requires Coq 8.18+ or Rocq 9.x. The imports use `From Coq Require Import` which is compatible with both. The `VarintConcrete.v` module prints golden test vectors via `Compute` during compilation — these match the Rust implementation byte-for-byte.
 
 ### TLA+ model checking
 
