@@ -79,8 +79,7 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
             if data.len() < 5 {
                 return None;
             }
-            let value =
-                u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as u64;
+            let value = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as u64;
             // Canonical check: value must require the 0xFE prefix (>= 65_536).
             if value < 0x1_0000 {
                 return None;
@@ -93,8 +92,7 @@ pub fn decode_varint(data: &[u8]) -> Option<(u64, usize)> {
                 return None;
             }
             let value = u64::from_le_bytes([
-                data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                data[8],
+                data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
             ]);
             // Canonical check: value must require the 0xFF prefix (>= 2^32).
             if value < 0x1_0000_0000 {
@@ -247,19 +245,13 @@ mod tests {
     #[test]
     fn decode_varint_rejects_non_canonical_fe_for_small_value() {
         // 100 encoded with 0xFE prefix: 0xFE 0x64 0x00 0x00 0x00 — non-canonical
-        assert_eq!(
-            decode_varint(&[0xFE, 0x64, 0x00, 0x00, 0x00]),
-            None
-        );
+        assert_eq!(decode_varint(&[0xFE, 0x64, 0x00, 0x00, 0x00]), None);
     }
 
     #[test]
     fn decode_varint_rejects_non_canonical_fe_for_fd_range() {
         // 1000 encoded with 0xFE prefix: non-canonical (fits in 0xFD range)
-        assert_eq!(
-            decode_varint(&[0xFE, 0xE8, 0x03, 0x00, 0x00]),
-            None
-        );
+        assert_eq!(decode_varint(&[0xFE, 0xE8, 0x03, 0x00, 0x00]), None);
     }
 
     #[test]
@@ -394,9 +386,12 @@ mod tests {
 /// fail to parse (the parse function rejects empty components).
 pub fn serialize_witness(pk: &[u8], sig: &[u8]) -> Vec<u8> {
     let pk_len_varint = encode_varint(pk.len() as u64);
-    let mut out = Vec::with_capacity(pk_len_varint.len() + pk.len() + sig.len());
+    let sig_len_varint = encode_varint(sig.len() as u64);
+    let mut out =
+        Vec::with_capacity(pk_len_varint.len() + pk.len() + sig_len_varint.len() + sig.len());
     out.extend_from_slice(&pk_len_varint);
     out.extend_from_slice(pk);
+    out.extend_from_slice(&sig_len_varint);
     out.extend_from_slice(sig);
     out
 }
@@ -421,24 +416,31 @@ pub fn parse_witness(w: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     }
 
     // Step 1: decode the varint pk_len
-    let (pk_len, varint_size) = decode_varint(w)?;
-
-    // pk_len must fit in usize for indexing
+    let (pk_len, pk_varint_size) = decode_varint(w)?;
     let pk_len = usize::try_from(pk_len).ok()?;
 
-    // Step 2: rest is everything after the varint
-    let rest = w.get(varint_size..)?;
+    // Step 2: get remaining bytes after pk_len varint
+    let rest_after_pk_len = w.get(pk_varint_size..)?;
 
-    // Step 3: pk_len must not exceed remaining bytes
-    if pk_len > rest.len() {
+    // Step 3: extract pk
+    if pk_len > rest_after_pk_len.len() {
         return None;
     }
+    let pk = &rest_after_pk_len[..pk_len];
 
-    // Step 4: split into pk and sig
-    let pk = &rest[..pk_len];
-    let sig = &rest[pk_len..];
+    // Step 4: decode sig_len from remaining bytes
+    let rest_after_pk = &rest_after_pk_len[pk_len..];
+    let (sig_len, sig_varint_size) = decode_varint(rest_after_pk)?;
+    let sig_len = usize::try_from(sig_len).ok()?;
 
-    // Step 5: reject empty components
+    // Step 5: extract sig
+    let sig_start = sig_varint_size;
+    if sig_start + sig_len > rest_after_pk.len() {
+        return None;
+    }
+    let sig = &rest_after_pk[sig_start..sig_start + sig_len];
+
+    // Step 6: reject empty components
     if pk.is_empty() || sig.is_empty() {
         return None;
     }
@@ -476,8 +478,10 @@ mod witness_tests {
         let sig = vec![0xAA, 0xBB];
         let w = serialize_witness(&pk, &sig);
         // pk_len = 3 → varint single byte 0x03
-        // total: [0x03, 0x01, 0x02, 0x03, 0xAA, 0xBB]
-        assert_eq!(w, vec![0x03, 0x01, 0x02, 0x03, 0xAA, 0xBB]);
+        // pk = [0x01, 0x02, 0x03]
+        // sig_len = 2 → varint single byte 0x02
+        // sig = [0xAA, 0xBB]
+        assert_eq!(w, vec![0x03, 0x01, 0x02, 0x03, 0x02, 0xAA, 0xBB]);
     }
 
     #[test]
@@ -486,8 +490,10 @@ mod witness_tests {
         let pk = vec![0x42; 1312];
         let sig = vec![0x99; 2420];
         let w = serialize_witness(&pk, &sig);
-        // varint(1312) = 3 bytes (0xFD prefix) → total = 3 + 1312 + 2420 = 3735
-        assert_eq!(w.len(), 3735);
+        // varint(1312) = 3 bytes (0xFD prefix)
+        // varint(2420) = 3 bytes (0xFD prefix)
+        // total = 3 + 1312 + 3 + 2420 = 3738
+        assert_eq!(w.len(), 3738);
         // First 3 bytes are the varint for 1312
         assert_eq!(&w[..3], &[0xFD, 0x20, 0x05]);
     }
@@ -498,8 +504,10 @@ mod witness_tests {
         let pk = vec![0x42; 32];
         let sig = vec![0x99; 7856];
         let w = serialize_witness(&pk, &sig);
-        // varint(32) = 1 byte → total = 1 + 32 + 7856 = 7889
-        assert_eq!(w.len(), 7889);
+        // varint(32) = 1 byte
+        // varint(7856) = 3 bytes (0xFD prefix)
+        // total = 1 + 32 + 3 + 7856 = 7892
+        assert_eq!(w.len(), 7892);
         assert_eq!(w[0], 0x20); // varint for 32
     }
 
@@ -530,7 +538,8 @@ mod witness_tests {
 
     #[test]
     fn parse_witness_basic() {
-        let w = vec![0x03, 0x01, 0x02, 0x03, 0xAA, 0xBB];
+        // pk_len = 3, pk = [1,2,3], sig_len = 2, sig = [0xAA, 0xBB]
+        let w = vec![0x03, 0x01, 0x02, 0x03, 0x02, 0xAA, 0xBB];
         let (pk, sig) = parse_witness(&w).unwrap();
         assert_eq!(pk, vec![0x01, 0x02, 0x03]);
         assert_eq!(sig, vec![0xAA, 0xBB]);
@@ -538,11 +547,11 @@ mod witness_tests {
 
     #[test]
     fn parse_witness_single_byte_pk_and_sig() {
-        // Minimal valid witness: pk_len=1, 1 byte pk, 1 byte sig
-        let w = vec![0x01, 0xFF, 0xEE];
+        // pk_len = 1, pk = [0xAB], sig_len = 1, sig = [0xCD]
+        let w = vec![0x01, 0xAB, 0x01, 0xCD];
         let (pk, sig) = parse_witness(&w).unwrap();
-        assert_eq!(pk, vec![0xFF]);
-        assert_eq!(sig, vec![0xEE]);
+        assert_eq!(pk, vec![0xAB]);
+        assert_eq!(sig, vec![0xCD]);
     }
 
     #[test]
@@ -615,22 +624,14 @@ mod witness_tests {
         // everything else as sig, so trailing bytes become part of sig.
         // But if we construct a witness and then append bytes, the
         // re-serialized form won't match because sig will be longer.
+        // Trailing bytes: add extra bytes after sig, which will fail parsing
+        // because parse_witness expects exact size based on sig_len
         let pk = vec![0x01, 0x02, 0x03];
         let sig = vec![0xAA, 0xBB];
         let mut w = serialize_witness(&pk, &sig);
-        w.push(0xFF); // trailing byte
-        // parse_witness will parse pk=[01,02,03], sig=[AA,BB,FF]
-        // re-serialize produces [03, 01,02,03, AA,BB,FF] which != w
-        // Actually w = [03, 01,02,03, AA,BB, FF] and re-serialized = [03, 01,02,03, AA,BB,FF]
-        // These are the same! The trailing byte just becomes part of sig.
-        // So this IS canonical. Let's verify:
-        let parsed = parse_witness(&w);
-        assert!(parsed.is_some());
-        let (ppk, psig) = parsed.unwrap();
-        assert_eq!(ppk, pk);
-        assert_eq!(psig, vec![0xAA, 0xBB, 0xFF]);
-        // Re-serialized matches w, so it IS canonical
-        assert!(is_canonical_witness(&w));
+        w.push(0xFF); // trailing byte - this makes the witness non-canonical
+                      // The witness now has extra bytes that aren't accounted for in sig_len
+        assert!(!is_canonical_witness(&w));
     }
 
     #[test]
@@ -1031,7 +1032,7 @@ mod multisig_witness_tests {
         let mut w = Vec::new();
         w.extend_from_slice(&encode_varint(256)); // k = 256
         w.extend_from_slice(&encode_varint(256)); // n = 256
-        // Don't need to add more — should fail at k > 255 check
+                                                  // Don't need to add more — should fail at k > 255 check
         assert_eq!(parse_multisig_witness(&w), None);
     }
 }

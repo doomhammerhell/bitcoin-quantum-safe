@@ -1,0 +1,13 @@
+(executable
+ (name golden_vectors)
+ (public_name golden_vectors)
+ (libraries unix)
+ (flags (:standard -w -27-32-33-39))
+)
+
+(install
+ (section bin)
+ (files (golden_vectors.exe as golden_vectors)))
+```
+
+</file_path>

@@ -8,6 +8,16 @@ license = "MIT"
 [dependencies]
 sha2 = "0.10"
 fips204 = { version = "0.4", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 proptest = "1.4"
+criterion = "0.5"
+
+[[bench]]
+name = "ml_dsa_bench"
+harness = false
+
+[[example]]
+name = "generate_golden_vectors"
