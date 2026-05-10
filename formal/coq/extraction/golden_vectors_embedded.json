@@ -1,0 +1,18 @@
+[
+  {
+    "name": "small",
+    "pk_len": 3,
+    "pk": "abcdef",
+    "sig_len": 2,
+    "sig": "1234",
+    "witness": "03abcdef021234"
+  },
+  {
+    "name": "mldsa44",
+    "pk_len": 1312,
+    "pk": "4242...",
+    "sig_len": 2420,
+    "sig": "9999...",
+    "witness": "fd2005..."
+  }
+]

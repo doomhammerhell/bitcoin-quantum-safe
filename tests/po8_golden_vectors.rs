@@ -13,7 +13,7 @@
 //! Requirements: PO-8 (Implementation Correspondence)
 //! Artifacts: Coq extraction → OCaml → JSON → Rust comparison
 
-use pq_witness_protocol::encoding::serialize_witness;
+use pq_witness_protocol::encoding::{parse_witness, serialize_witness};
 
 /// A golden test vector
 #[derive(Debug, serde::Deserialize)]

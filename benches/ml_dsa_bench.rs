@@ -33,7 +33,7 @@ fn bench_keygen(c: &mut Criterion) {
 fn bench_sign(c: &mut Criterion) {
     // Generate a test keypair
     let (pk, sk) = ml_dsa_44::try_keygen().unwrap();
-    let pk_bytes = pk.into_bytes();
+    let _pk_bytes = pk.into_bytes(); // prefixed with _ to suppress unused warning
 
     // Test message
     let message = b"benchmark test message for ml-dsa-44 signing";

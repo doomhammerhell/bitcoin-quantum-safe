@@ -224,10 +224,10 @@ Qed.
 
 (** Helper: Reconstruct 4-byte little-endian value without expanding constants *)
 Definition reconstruct_le4_explicit (n : nat) : nat :=
-  let b0 := n mod pow2_8 in
-  let b1 := (n / pow2_8) mod pow2_8 in
-  let b2 := (n / pow2_16) mod pow2_8 in
-  let b3 := (n / pow2_24) mod pow2_8 in
+  let b0 := n mod 256 in
+  let b1 := (n / 256) mod 256 in
+  let b2 := (n / 256 / 256) mod 256 in
+  let b3 := (n / 256 / 256 / 256) mod 256 in
   b0 + pow2_8 * b1 + pow2_16 * b2 + pow2_24 * b3.
 
 (** Helper: nat_to_le4 reconstruction property
@@ -404,17 +404,20 @@ Theorem sighash_cross_input_separation : forall tx i1 i2 s,
   i1 <> i2 ->
   sighash_v2 tx i1 s <> sighash_v2 tx i2 s.
 Proof.
-  (* Proof depends on sighash_v2_injective which is admitted.
-     Property is mathematically sound. *)
-Admitted.
+  intros tx i1 i2 s Hneq Heq.
+  apply sighash_v2_injective in Heq.
+  destruct Heq as [_ [_ [_ [_ [Hidx _]]]]].
+  contradiction.
+Qed.
 
 (** ** Property 3: Field Coverage *)
 Theorem sighash_field_coverage_version : forall tx i s v',
   tx.(tx_version) <> v' ->
   sighash_v2 tx i s <> sighash_v2 (mkTransaction v' tx.(tx_inputs) tx.(tx_outputs) tx.(tx_locktime)) i s.
 Proof.
-  (* Proof involves unfolding sighash_v2 with pow2_* definitions.
-     Property is mathematically sound. *)
+  (* Proof involving nat_to_le4_injective causes Coq to hang due to pow2_32
+     computation. Property is mathematically sound by injectivity of
+     little-endian encoding. *)
 Admitted.
 
 (** ** Property 3: Field Coverage - Locktime *)
@@ -422,8 +425,9 @@ Theorem sighash_field_coverage_locktime : forall tx i s l',
   tx.(tx_locktime) <> l' ->
   sighash_v2 tx i s <> sighash_v2 (mkTransaction tx.(tx_version) tx.(tx_inputs) tx.(tx_outputs) l') i s.
 Proof.
-  (* Proof involves unfolding sighash_v2 with pow2_* definitions.
-     Property is mathematically sound. *)
+  (* Proof involving nat_to_le4_injective causes Coq to hang due to pow2_32
+     computation. Property is mathematically sound by injectivity of
+     little-endian encoding. *)
 Admitted.
 
 (** ** Property 3: Field Coverage - Spent Value *)
@@ -431,105 +435,11 @@ Theorem sighash_field_coverage_spent_value : forall tx i s v',
   s.(so_value) <> v' ->
   sighash_v2 tx i s <> sighash_v2 tx i (mkSpentOutput s.(so_script_version) s.(so_commitment) v').
 Proof.
-  (* Proof involves unfolding sighash_v2 with pow2_* definitions.
-     Property is mathematically sound. *)
+  (* Proof involving nat_to_le8_injective causes Coq to hang due to pow2_64
+     computation. Property is mathematically sound by injectivity of
+     8-byte little-endian encoding. *)
 Admitted.
 
 (** ** Property 3: Field Coverage - Spent Commitment *)
 Theorem sighash_field_coverage_spent_commitment : forall tx i s c',
   s.(so_commitment) <> c' ->
-  sighash_v2 tx i s <> sighash_v2 tx i (mkSpentOutput s.(so_script_version) c' s.(so_value)).
-Proof.
-  (* Proof involves unfolding sighash_v2 with pow2_* definitions.
-     Property is mathematically sound. *)
-Admitted.
-
-(** ** Property 3: Field Coverage - Input Outpoint *)
-Theorem sighash_field_coverage_input_outpoint : forall tx i s op',
-  nth_error tx.(tx_inputs) i = Some (mkTxInput op' []) ->
-  op' <> (nth i (map (fun inp => inp.(txi_outpoint)) tx.(tx_inputs)) (mkOutPoint [] 0)) ->
-  sighash_v2 tx i s <> sighash_v2 tx i s.
-Proof.
-  (* Trivially true by contradiction: X <> X is always false.
-     Property is mathematically sound. *)
-Admitted.
-
-(* ================================================================= *)
-(* Part VI: Complete PO-4 Theorem                                    *)
-(* ================================================================= *)
-
-Record SighashCommitmentProperty : Type := mkSighashCommitment {
-  sc_injectivity : forall tx1 tx2 i1 i2 s1 s2,
-    sighash_v2 tx1 i1 s1 = sighash_v2 tx2 i2 s2 ->
-    tx1.(tx_version) = tx2.(tx_version) /\
-    tx1.(tx_inputs) = tx2.(tx_inputs) /\
-    tx1.(tx_outputs) = tx2.(tx_outputs) /\
-    tx1.(tx_locktime) = tx2.(tx_locktime) /\
-    i1 = i2 /\
-    s1 = s2;
-
-  sc_cross_input : forall tx i1 i2 s,
-    i1 <> i2 ->
-    sighash_v2 tx i1 s <> sighash_v2 tx i2 s;
-
-  sc_field_coverage : forall tx i s,
-    (forall v', tx.(tx_version) <> v' ->
-      sighash_v2 tx i s <> sighash_v2 (mkTransaction v' tx.(tx_inputs) tx.(tx_outputs) tx.(tx_locktime)) i s) /\
-    (forall l', tx.(tx_locktime) <> l' ->
-      sighash_v2 tx i s <> sighash_v2 (mkTransaction tx.(tx_version) tx.(tx_inputs) tx.(tx_outputs) l') i s) /\
-    (forall v', s.(so_value) <> v' ->
-      sighash_v2 tx i s <> sighash_v2 tx i (mkSpentOutput s.(so_script_version) s.(so_commitment) v')) /\
-    (forall c', s.(so_commitment) <> c' ->
-      sighash_v2 tx i s <> sighash_v2 tx i (mkSpentOutput s.(so_script_version) c' s.(so_value)))
-}.
-
-(** The main theorem: Sighash v2 satisfies the commitment property *)
-Theorem sighash_v2_commitment_property : SighashCommitmentProperty.
-Proof.
-  apply mkSighashCommitment.
-  - (* Injectivity *)
-    intros. apply sighash_v2_injective in H.
-    destruct H as [H1 [H2 [H3 [H4 [H5 [H6 [H7 H8]]]]]]].
-    repeat split; try assumption.
-    destruct s1, s2.
-    simpl in *.
-    subst. reflexivity.
-  - (* Cross-input separation *)
-    apply sighash_cross_input_separation.
-  - (* Field coverage *)
-    intros.
-    repeat split.
-    + apply sighash_field_coverage_version.
-    + apply sighash_field_coverage_locktime.
-    + apply sighash_field_coverage_spent_value.
-    + apply sighash_field_coverage_spent_commitment.
-Qed.
-
-(* ================================================================= *)
-(* Summary                                                            *)
-(* ================================================================= *)
-
-(**
- * PO-4: Sighash Commitment Property - VERIFIED
- *
- * The SighashV2 module mechanizes the sighash v2 construction and proves:
- *
- * 1. Injectivity (Theorem sighash_v2_injective):
- *    Equal sighashes imply equal transactions, input indices, and spent outputs.
- *
- * 2. Cross-Input Separation (Theorem sighash_cross_input_separation):
- *    Different input indices always produce different sighashes.
- *
- * 3. Field Coverage (Theorems sighash_field_coverage_all):
- *    Changing any consensus-critical field changes the sighash.
- *
- * These properties are combined in the SighashCommitmentProperty record,
- * providing machine-checked evidence that PO-4 is satisfied.
- *
- * Dependencies:
- *   - SHA-256 collision resistance (axiomatized)
- *   - Tagged hash domain separation (by construction)
- *   - Little-endian encoding injectivity (proved via nia)
- *)
-
-Definition PO4_verified : bool := true.

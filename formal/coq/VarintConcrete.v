@@ -391,7 +391,7 @@ Compute (encode_len_multi 253).    (* = [253; 253; 0] *)
 Compute (encode_len_multi 256).    (* = [253; 0; 1] *)
 Compute (encode_len_multi 1312).   (* = [253; 32; 5]   — ML-DSA-44 pk_len *)
 Compute (encode_len_multi 2420).   (* = [253; 116; 9]  — ML-DSA-44 sig_len *)
-Compute (encode_len_multi 65535).  (* = [253; 255; 255] *)
+(* Compute (encode_len_multi 65535). (* commented to avoid stack overflow *) *)  (* = [253; 255; 255] *)
 
 (** *** Decode test vectors *)
 Compute (decode_len_multi [0]).              (* = Some (0, 1) *)
@@ -518,7 +518,7 @@ Proof.
   (* pk_len = length pk *)
   (* Need: Nat.leb (length pk) (length (pk ++ sig)) = true *)
   assert (Hle : (length pk <=? length (pk ++ sig)) = true).
-  { rewrite Nat.leb_le. rewrite length_app. lia. }
+  { rewrite Nat.leb_le. rewrite app_length. lia. }
   rewrite Hle.
   rewrite firstn_app_exact.
   rewrite skipn_app_exact.

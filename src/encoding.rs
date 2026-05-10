@@ -724,6 +724,7 @@ pub fn serialize_multisig_witness(
 /// Returns `None` for any malformed, truncated, or non-canonical witness.
 ///
 /// # Requirements: 6.5, 6.6, 11.5
+#[allow(clippy::type_complexity)]
 pub fn parse_multisig_witness(w: &[u8]) -> Option<(u8, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>)> {
     if w.is_empty() {
         return None;

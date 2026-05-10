@@ -5,8 +5,8 @@
 //!
 //! Usage: cargo run --example generate_golden_vectors > rust_vectors.json
 
-use pq_witness_protocol::encoding::{encode_varint, serialize_witness};
-use sha2::{Digest, Sha256};
+use pq_witness_protocol::encoding::serialize_witness;
+// sha2 not used in this example
 
 /// A golden test vector
 #[derive(Debug, serde::Serialize)]
