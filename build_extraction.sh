@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # build_extraction.sh: Build script for Coq→OCaml extraction
 #
 # This script:
