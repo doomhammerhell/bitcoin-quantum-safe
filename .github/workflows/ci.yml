@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  COQ_VERSION: 8.18.0
+  OCAML_VERSION: 4.14.0
 
 jobs:
   rust:
@@ -44,28 +46,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache opam
-        uses: actions/cache@v4
+      - name: Setup OCaml/opam
+        uses: ocaml/setup-ocaml@v3
         with:
-          path: ~/.opam
-          key: ${{ runner.os }}-opam-coq820
-          restore-keys: ${{ runner.os }}-opam-
+          ocaml-compiler: ${{ env.OCAML_VERSION }}
+          opam-disable-sandboxing: true
 
       - name: Install Coq
         run: |
-          sudo apt-get update
-          sudo apt-get install -y opam
-          opam init --auto-setup --disable-sandboxing || true
-          eval $(opam env)
-          opam install -y coq.8.20.1
-          eval $(opam env)
-          coqc --version
+          opam install -y coq.${{ env.COQ_VERSION }}
+          opam exec -- coqc --version
 
       - name: Build Coq proofs
         run: |
-          eval $(opam env)
           cd formal/coq
-          make
+          opam exec -- make
 
   tlc:
     name: TLA+ model checking

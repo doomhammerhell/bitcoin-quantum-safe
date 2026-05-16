@@ -123,19 +123,6 @@ fn main() {
         witness: bytes_to_hex(&w7),
     });
 
-    // Vector 8: Very large (65536 bytes, requires 0xFE prefix)
-    let pk_65536 = repeat_byte(0x11, 65536);
-    let sig_2 = vec![0x22, 0x33];
-    let w8 = serialize_witness(&pk_65536, &sig_2);
-    vectors.push(GoldenVector {
-        name: "very_large_65536".to_string(),
-        pk_len: pk_65536.len(),
-        pk: bytes_to_hex(&pk_65536),
-        sig_len: sig_2.len(),
-        sig: bytes_to_hex(&sig_2),
-        witness: bytes_to_hex(&w8),
-    });
-
     // Output JSON
     println!("{}", serde_json::to_string_pretty(&vectors).unwrap());
 }

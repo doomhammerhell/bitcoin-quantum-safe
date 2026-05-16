@@ -159,9 +159,9 @@ Axiom decode_len_consumed_eq : forall (bs : list nat) (v consumed : nat),
 (** ** Serialize *)
 
 (** [serialize_witness pk sig] produces the canonical witness encoding:
-    [encode_len(|pk|) ++ pk ++ sig]. *)
+    [encode_len(|pk|) ++ pk ++ encode_len(|sig|) ++ sig]. *)
 Definition serialize_witness (pk : pubkey) (sig : signature) : witness :=
-  encode_len (length pk) ++ pk ++ sig.
+  encode_len (length pk) ++ pk ++ encode_len (length sig) ++ sig.
 
 (** ** Parse *)
 
@@ -172,22 +172,34 @@ Definition serialize_witness (pk : pubkey) (sig : signature) : witness :=
     2. Let [rest] = bytes after the varint
     3. If [pk_len > |rest|] then fail
     4. [pk] = first [pk_len] bytes of [rest]
-    5. [sig] = remaining bytes of [rest]
-    6. If [pk] is empty or [sig] is empty then fail
-    7. Return [Some (pk, sig)]
+    5. Decode varint [sig_len] from the bytes after [pk]
+    6. [sig] = first [sig_len] bytes after the signature-length varint
+    7. Reject trailing bytes, empty [pk], and empty [sig]
+    8. Return [Some (pk, sig)]
 *)
 Definition parse_varint_witness (w : witness) : option (pubkey * signature) :=
   match decode_len w with
   | None => None
-  | Some (pk_len, consumed) =>
-    let rest := skipn consumed w in
-    if Nat.leb pk_len (length rest) then
-      let pk := firstn pk_len rest in
-      let sig := skipn pk_len rest in
-      match pk, sig with
-      | [], _ => None
-      | _, [] => None
-      | _ :: _, _ :: _ => Some (pk, sig)
+  | Some (pk_len, pk_consumed) =>
+    let rest_after_pk_len := skipn pk_consumed w in
+    if Nat.leb pk_len (length rest_after_pk_len) then
+      let pk := firstn pk_len rest_after_pk_len in
+      let rest_after_pk := skipn pk_len rest_after_pk_len in
+      match decode_len rest_after_pk with
+      | None => None
+      | Some (sig_len, sig_consumed) =>
+        let rest_after_sig_len := skipn sig_consumed rest_after_pk in
+        if Nat.leb sig_len (length rest_after_sig_len) then
+          let sig := firstn sig_len rest_after_sig_len in
+          let trailing := skipn sig_len rest_after_sig_len in
+          match pk, sig, trailing with
+          | [], _, _ => None
+          | _, [], _ => None
+          | _ :: _, _ :: _, [] => Some (pk, sig)
+          | _, _, _ :: _ => None
+          end
+        else
+          None
       end
     else
       None
@@ -289,22 +301,30 @@ Theorem parse_serialize_round_trip :
 Proof.
   intros pk sig Hpk Hsig.
   unfold parse_varint_witness, serialize_witness.
-  (* The witness is: encode_len(|pk|) ++ pk ++ sig *)
+  (* The witness is: encode_len(|pk|) ++ pk ++ encode_len(|sig|) ++ sig *)
   (* Step 1: decode_len succeeds on the prefix *)
   rewrite decode_len_app.
   (* Now we need to show skipn, firstn, etc. work correctly *)
-  (* rest = skipn (length (encode_len (length pk))) (encode_len (length pk) ++ pk ++ sig) *)
+  (* rest = skipn (length (encode_len (length pk))) (encode_len (length pk) ++ pk ++ encode_len (length sig) ++ sig) *)
   rewrite skipn_app_exact.
-  (* rest = pk ++ sig *)
+  (* rest = pk ++ encode_len (length sig) ++ sig *)
   (* pk_len = length pk *)
-  (* Need: Nat.leb (length pk) (length (pk ++ sig)) = true *)
-  assert (Hle : (length pk <=? length (pk ++ sig)) = true).
+  (* Need: Nat.leb (length pk) (length (pk ++ encode_len (length sig) ++ sig)) = true *)
+  assert (Hle : (length pk <=? length (pk ++ encode_len (length sig) ++ sig)) = true).
   { rewrite Nat.leb_le. rewrite app_length. lia. }
   rewrite Hle.
-  (* firstn (length pk) (pk ++ sig) = pk *)
+  (* firstn (length pk) (pk ++ encode_len (length sig) ++ sig) = pk *)
   rewrite firstn_app_exact.
-  (* skipn (length pk) (pk ++ sig) = sig *)
+  (* skipn (length pk) (pk ++ encode_len (length sig) ++ sig) = encode_len (length sig) ++ sig *)
   rewrite skipn_app_exact.
+  (* Decode and consume the signature length prefix. *)
+  rewrite decode_len_app.
+  rewrite skipn_app_exact.
+  assert (Hsigle : (length sig <=? length sig) = true).
+  { rewrite Nat.leb_le. lia. }
+  rewrite Hsigle.
+  rewrite firstn_all.
+  rewrite skipn_all.
   (* Now we need pk and sig to be non-empty *)
   destruct pk as [| pk_hd pk_tl].
   - exfalso. apply Hpk. reflexivity.
@@ -322,31 +342,37 @@ Qed.
 Lemma parse_varint_extracts :
   forall (w : witness) (pk sig : bytes),
     parse_varint_witness w = Some (pk, sig) ->
-    exists (pk_len consumed : nat),
-      decode_len w = Some (pk_len, consumed) /\
-      pk_len <= length (skipn consumed w) /\
-      pk = firstn pk_len (skipn consumed w) /\
-      sig = skipn pk_len (skipn consumed w) /\
+    exists (pk_len pk_consumed sig_len sig_consumed : nat),
+      decode_len w = Some (pk_len, pk_consumed) /\
+      pk_len <= length (skipn pk_consumed w) /\
+      pk = firstn pk_len (skipn pk_consumed w) /\
+      decode_len (skipn pk_len (skipn pk_consumed w)) = Some (sig_len, sig_consumed) /\
+      sig_len <= length (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) /\
+      sig = firstn sig_len (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) /\
+      skipn sig_len (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) = [] /\
       pk <> [] /\
       sig <> [].
 Proof.
   intros w pk sig Hp.
   unfold parse_varint_witness in Hp.
-  destruct (decode_len w) as [[pk_len consumed] |] eqn:Hdec; [| discriminate].
-  exists pk_len, consumed.
-  destruct (Nat.leb pk_len (length (skipn consumed w))) eqn:Hleb; [| discriminate].
-  apply Nat.leb_le in Hleb.
-  split; [reflexivity |].
-  split; [exact Hleb |].
-  remember (firstn pk_len (skipn consumed w)) as fpk eqn:Hfpk.
-  remember (skipn pk_len (skipn consumed w)) as ssig eqn:Hssig.
+  destruct (decode_len w) as [[pk_len pk_consumed] |] eqn:Hdec; [| discriminate].
+  exists pk_len, pk_consumed.
+  destruct (Nat.leb pk_len (length (skipn pk_consumed w))) eqn:Hpkleb; [| discriminate].
+  apply Nat.leb_le in Hpkleb.
+  remember (firstn pk_len (skipn pk_consumed w)) as fpk eqn:Hfpk.
+  remember (skipn pk_len (skipn pk_consumed w)) as rest_after_pk eqn:Hrest.
+  destruct (decode_len rest_after_pk) as [[sig_len sig_consumed] |] eqn:Hsigdec; [| discriminate].
+  exists sig_len, sig_consumed.
+  destruct (Nat.leb sig_len (length (skipn sig_consumed rest_after_pk))) eqn:Hsigleb; [| discriminate].
+  apply Nat.leb_le in Hsigleb.
+  remember (firstn sig_len (skipn sig_consumed rest_after_pk)) as ssig eqn:Hssig.
+  remember (skipn sig_len (skipn sig_consumed rest_after_pk)) as trailing eqn:Htrailing.
   destruct fpk as [| ph pt]; [discriminate |].
   destruct ssig as [| sh st]; [discriminate |].
+  destruct trailing as [| th tt]; [| discriminate].
   assert (Hpkeq : pk = ph :: pt) by congruence.
   assert (Hsigeq : sig = sh :: st) by congruence.
-  split; [congruence |].
-  split; [congruence |].
-  split; [subst pk; discriminate | subst sig; discriminate].
+  repeat split; try congruence.
 Qed.
 
 (* ================================================================= *)
@@ -363,13 +389,16 @@ Theorem parse_varint_canonical_re_serialize :
     parse_varint_witness (serialize_witness pk sig) = Some (pk, sig).
 Proof.
   intros w pk sig Hp.
-  pose proof (parse_varint_extracts w pk sig Hp)
-    as [pk_len [consumed [Hdec [Hle [Hpk [Hsig [Hpkne Hsigne]]]]]]].
+  destruct (parse_varint_extracts w pk sig Hp)
+    as [pk_len [pk_consumed [sig_len [sig_consumed Hextract]]]].
+  destruct Hextract
+    as [_ [_ [_ [_ [_ [_ [_ [Hpkne Hsigne]]]]]]]].
   apply parse_serialize_round_trip; assumption.
 Qed.
 
 (** Stronger canonicality: if [parse_varint_witness w = Some (pk, sig)],
-    then [w] decomposes as [encode_len(|pk|) ++ pk ++ sig], i.e.,
+    then [w] decomposes as
+    [encode_len(|pk|) ++ pk ++ encode_len(|sig|) ++ sig], i.e.,
     [w = serialize_witness pk sig]. *)
 
 Theorem parse_varint_witness_determines_serialize :
@@ -378,25 +407,37 @@ Theorem parse_varint_witness_determines_serialize :
     w = serialize_witness pk sig.
 Proof.
   intros w pk sig Hp.
-  pose proof (parse_varint_extracts w pk sig Hp)
-    as [pk_len [consumed [Hdec [Hle [Hpk [Hsig [Hpkne Hsigne]]]]]]].
+  destruct (parse_varint_extracts w pk sig Hp)
+    as [pk_len [pk_consumed [sig_len [sig_consumed Hextract]]]].
+  destruct Hextract
+    as [Hpkdec [Hpkle [Hpk [Hsigdec [Hsigle [Hsig [Htrail [Hpkne Hsigne]]]]]]]].
   unfold serialize_witness.
-  (* w = firstn consumed w ++ skipn consumed w *)
-  rewrite <- (firstn_skipn consumed w) at 1.
-  (* firstn consumed w = encode_len pk_len by canonicality axiom *)
-  pose proof (decode_len_canonical w pk_len consumed Hdec) as Hcan.
-  rewrite Hcan.
-  (* skipn consumed w = firstn pk_len (skipn consumed w) ++ skipn pk_len (skipn consumed w) *)
-  rewrite <- (firstn_skipn pk_len (skipn consumed w)) at 1.
-  (* pk = firstn pk_len (skipn consumed w), sig = skipn pk_len (skipn consumed w) *)
-  rewrite <- Hpk. rewrite <- Hsig.
+  (* w = firstn pk_consumed w ++ skipn pk_consumed w *)
+  rewrite <- (firstn_skipn pk_consumed w) at 1.
+  (* firstn pk_consumed w = encode_len pk_len by canonicality axiom *)
+  pose proof (decode_len_canonical w pk_len pk_consumed Hpkdec) as Hpkcan.
+  rewrite Hpkcan.
+  (* skipn pk_consumed w = firstn pk_len (...) ++ skipn pk_len (...) *)
+  rewrite <- (firstn_skipn pk_len (skipn pk_consumed w)) at 1.
+  rewrite <- Hpk.
+  (* The remaining suffix starts with the canonical signature-length varint. *)
+  rewrite <- (firstn_skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) at 1.
+  pose proof (decode_len_canonical
+    (skipn pk_len (skipn pk_consumed w)) sig_len sig_consumed Hsigdec) as Hsigcan.
+  rewrite Hsigcan.
+  rewrite <- (firstn_skipn sig_len
+    (skipn sig_consumed (skipn pk_len (skipn pk_consumed w)))) at 1.
+  rewrite <- Hsig.
+  rewrite Htrail.
+  rewrite app_nil_r.
   (* Need: pk_len = length pk *)
   assert (Hpklen : length pk = pk_len).
-  { rewrite Hpk. rewrite length_firstn_le; [reflexivity | exact Hle]. }
+  { rewrite Hpk. rewrite length_firstn_le; [reflexivity | exact Hpkle]. }
   rewrite Hpklen.
-  (* Need: consumed = length (encode_len (length pk)) *)
-  pose proof (decode_len_consumed_eq w pk_len consumed Hdec) as Hceq.
-  rewrite <- Hpklen in Hceq.
+  (* Need: sig_len = length sig *)
+  assert (Hsiglen : length sig = sig_len).
+  { rewrite Hsig. rewrite length_firstn_le; [reflexivity | exact Hsigle]. }
+  rewrite Hsiglen.
   reflexivity.
 Qed.
 

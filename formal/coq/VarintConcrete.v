@@ -401,7 +401,12 @@ Compute (decode_len_multi [253; 253; 0]).    (* = Some (253, 3) *)
 Compute (decode_len_multi [253; 0; 1]).      (* = Some (256, 3) *)
 Compute (decode_len_multi [253; 32; 5]).     (* = Some (1312, 3) *)
 Compute (decode_len_multi [253; 116; 9]).    (* = Some (2420, 3) *)
-Compute (decode_len_multi [253; 255; 255]).  (* = Some (65535, 3) *)
+(** The maximal u16 vector is stated as an example rather than computed.
+    Coq 8.18/8.20 can overflow the VM stack while reducing the decimal
+    numeral [65535] in this context on GitHub-hosted runners. *)
+Example decode_len_multi_max_u16 :
+  decode_len_multi [253; 255; 255] = Some (max_u16, 3).
+Proof. reflexivity. Qed.
 
 (** *** Rejection test vectors *)
 Compute (decode_len_multi [253; 252; 0]).  (* = None — non-canonical (252 < 253) *)
@@ -479,21 +484,32 @@ Qed.
 
 (** Concrete witness serialization using the multi-byte varint. *)
 Definition serialize_witness_concrete (pk sig : list nat) : list nat :=
-  encode_len_multi (length pk) ++ pk ++ sig.
+  encode_len_multi (length pk) ++ pk ++ encode_len_multi (length sig) ++ sig.
 
 (** Concrete witness parsing using the multi-byte varint. *)
 Definition parse_witness_concrete (w : list nat) : option (list nat * list nat) :=
   match decode_len_multi w with
   | None => None
-  | Some (pk_len, consumed) =>
-    let rest := skipn consumed w in
-    if Nat.leb pk_len (length rest) then
-      let pk := firstn pk_len rest in
-      let sig := skipn pk_len rest in
-      match pk, sig with
-      | [], _ => None
-      | _, [] => None
-      | _ :: _, _ :: _ => Some (pk, sig)
+  | Some (pk_len, pk_consumed) =>
+    let rest_after_pk_len := skipn pk_consumed w in
+    if Nat.leb pk_len (length rest_after_pk_len) then
+      let pk := firstn pk_len rest_after_pk_len in
+      let rest_after_pk := skipn pk_len rest_after_pk_len in
+      match decode_len_multi rest_after_pk with
+      | None => None
+      | Some (sig_len, sig_consumed) =>
+        let rest_after_sig_len := skipn sig_consumed rest_after_pk in
+        if Nat.leb sig_len (length rest_after_sig_len) then
+          let sig := firstn sig_len rest_after_sig_len in
+          let trailing := skipn sig_len rest_after_sig_len in
+          match pk, sig, trailing with
+          | [], _, _ => None
+          | _, [], _ => None
+          | _ :: _, _ :: _, [] => Some (pk, sig)
+          | _, _, _ :: _ => None
+          end
+        else
+          None
       end
     else
       None
@@ -506,22 +522,30 @@ Theorem parse_serialize_concrete_round_trip :
     pk <> [] ->
     sig <> [] ->
     length pk <= max_u16 ->
+    length sig <= max_u16 ->
     parse_witness_concrete (serialize_witness_concrete pk sig) = Some (pk, sig).
 Proof.
-  intros pk sig Hpk Hsig Hpklen.
+  intros pk sig Hpk Hsig Hpklen Hsiglen.
   unfold parse_witness_concrete, serialize_witness_concrete.
   (* Step 1: decode_len_multi succeeds on the prefix *)
   rewrite decode_len_app_multi by assumption.
-  (* rest = skipn (length (encode_len_multi (length pk))) (encode_len_multi (length pk) ++ pk ++ sig) *)
+  (* rest = skipn (length (encode_len_multi (length pk))) (encode_len_multi (length pk) ++ pk ++ encode_len_multi (length sig) ++ sig) *)
   rewrite skipn_app_exact.
-  (* rest = pk ++ sig *)
+  (* rest = pk ++ encode_len_multi (length sig) ++ sig *)
   (* pk_len = length pk *)
-  (* Need: Nat.leb (length pk) (length (pk ++ sig)) = true *)
-  assert (Hle : (length pk <=? length (pk ++ sig)) = true).
+  (* Need: Nat.leb (length pk) (length (pk ++ encode_len_multi (length sig) ++ sig)) = true *)
+  assert (Hle : (length pk <=? length (pk ++ encode_len_multi (length sig) ++ sig)) = true).
   { rewrite Nat.leb_le. rewrite app_length. lia. }
   rewrite Hle.
   rewrite firstn_app_exact.
   rewrite skipn_app_exact.
+  rewrite decode_len_app_multi by assumption.
+  rewrite skipn_app_exact.
+  assert (Hsigle : (length sig <=? length sig) = true).
+  { rewrite Nat.leb_le. lia. }
+  rewrite Hsigle.
+  rewrite firstn_all.
+  rewrite skipn_all.
   destruct pk as [| ph pt].
   - exfalso. apply Hpk. reflexivity.
   - destruct sig as [| sh st].

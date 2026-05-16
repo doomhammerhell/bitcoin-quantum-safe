@@ -374,11 +374,12 @@ mod tests {
 // Single-signature witness Serialize / Parse
 // ---------------------------------------------------------------------------
 
-/// Serialize a single-signature witness: `<pk_len: varint> <pk> <sig>`.
+/// Serialize a single-signature witness:
+/// `<pk_len: varint> <pk> <sig_len: varint> <sig>`.
 ///
 /// The encoding matches the Coq-verified parse function in
 /// `formal/coq/SpendPredPQ.v`: a length prefix followed by the public key
-/// bytes followed by the signature bytes (the remaining bytes).
+/// bytes, then an explicit signature length prefix and the signature bytes.
 ///
 /// # Panics
 ///
@@ -405,9 +406,10 @@ pub fn serialize_witness(pk: &[u8], sig: &[u8]) -> Vec<u8> {
 /// 2. Decode varint `pk_len` from the start of `w`
 /// 3. Let `rest = w[varint_size..]`
 /// 4. If `pk_len > len(rest)` → `None`
-/// 5. `pk = rest[0..pk_len]`, `sig = rest[pk_len..]`
-/// 6. If `pk` is empty OR `sig` is empty → `None`
-/// 7. Return `Some((pk, sig))`
+/// 5. Decode varint `sig_len` after `pk`
+/// 6. `sig = rest_after_sig_len[0..sig_len]`
+/// 7. If `pk` is empty, `sig` is empty, or bytes remain after `sig` → `None`
+/// 8. Return `Some((pk, sig))`
 ///
 /// Returns `None` for any malformed, truncated, or empty-component witness.
 pub fn parse_witness(w: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
@@ -435,7 +437,7 @@ pub fn parse_witness(w: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 
     // Step 5: extract sig
     let sig_start = sig_varint_size;
-    if sig_start + sig_len > rest_after_pk.len() {
+    if sig_start + sig_len != rest_after_pk.len() {
         return None;
     }
     let sig = &rest_after_pk[sig_start..sig_start + sig_len];
@@ -619,19 +621,15 @@ mod witness_tests {
 
     #[test]
     fn non_canonical_witness_trailing_bytes() {
-        // A valid witness with extra trailing bytes appended.
-        // parse_witness will consume pk_len bytes for pk and treat
-        // everything else as sig, so trailing bytes become part of sig.
-        // But if we construct a witness and then append bytes, the
-        // re-serialized form won't match because sig will be longer.
-        // Trailing bytes: add extra bytes after sig, which will fail parsing
-        // because parse_witness expects exact size based on sig_len
+        // A valid witness with extra trailing bytes appended. The explicit
+        // sig_len prefix makes the encoding exact; bytes after sig are invalid.
         let pk = vec![0x01, 0x02, 0x03];
         let sig = vec![0xAA, 0xBB];
         let mut w = serialize_witness(&pk, &sig);
         w.push(0xFF); // trailing byte - this makes the witness non-canonical
                       // The witness now has extra bytes that aren't accounted for in sig_len
         assert!(!is_canonical_witness(&w));
+        assert_eq!(parse_witness(&w), None);
     }
 
     #[test]

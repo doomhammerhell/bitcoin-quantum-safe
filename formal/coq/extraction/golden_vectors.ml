@@ -68,10 +68,6 @@ let test_sig_254 = repeat 0xDD 254
 let test_pk_65535 = repeat 0xEE 65535
 let test_sig_1 = [0xFF]
 
-(* Case 6: Requires 0xFE prefix (65536+) *)
-let test_pk_65536 = repeat 0x11 65536
-let test_sig_2 = [0x22; 0x33]
-
 (* JSON output helper *)
 let print_json_vector name pk signature witness =
   Printf.printf "  {\n";
@@ -117,13 +113,8 @@ let () =
   print_json_vector "boundary_254" test_pk_254 test_sig_254 w6;
   Printf.printf ",\n";
 
-  (* Vector 7: Large (65535 bytes) *)
+  (* Vector 7: Large boundary within the Coq u16 varint model *)
   let w7 = serialize_witness test_pk_65535 test_sig_1 in
   print_json_vector "large_65535" test_pk_65535 test_sig_1 w7;
-  Printf.printf ",\n";
-
-  (* Vector 8: Very large (65536 bytes, requires 0xFE) *)
-  let w8 = serialize_witness test_pk_65536 test_sig_2 in
-  print_json_vector "very_large_65536" test_pk_65536 test_sig_2 w8;
   Printf.printf "\n";
   Printf.printf "]\n";
