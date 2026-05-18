@@ -190,6 +190,11 @@ mod tests {
     }
 
     #[test]
+    fn max_witness_size_fits_formal_varint_domain() {
+        assert!(MAX_WITNESS_SIZE <= u16::MAX as usize);
+    }
+
+    #[test]
     fn c_max_is_four_million() {
         assert_eq!(C_MAX, 4_000_000);
     }

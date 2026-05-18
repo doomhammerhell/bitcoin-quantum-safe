@@ -7,11 +7,11 @@
 //! Requirements validated: 3.2, 4.1–4.5, 4.9, 5.1–5.3, 6.2, 6.3, 6.5,
 //! 7.1, 7.2, 7.6, 8.5
 
-use pq_witness_protocol::*;
-use pq_witness_protocol::types::{OutPoint, Output, TxInput, TxOutput, Transaction};
-use pq_witness_protocol::migration::{get_phase, MigrationPhase};
 use pq_witness_protocol::freeze::is_frozen;
+use pq_witness_protocol::migration::{get_phase, MigrationPhase};
+use pq_witness_protocol::types::{OutPoint, Output, Transaction, TxInput, TxOutput};
 use pq_witness_protocol::weight::cost_tx;
+use pq_witness_protocol::*;
 
 use fips204::ml_dsa_44;
 use fips204::traits::{SerDes, Signer};
@@ -94,7 +94,7 @@ fn build_pq_witness(
 ) -> Vec<u8> {
     let sighash = sighash_v2(tx, input_index, spent_output);
     let sig = sk.try_sign(&sighash, &[]).unwrap();
-    serialize_witness(pk_bytes, &sig.to_vec())
+    serialize_witness(pk_bytes, sig.as_ref())
 }
 
 /// Build a transaction spending a legacy output into a PQ output.
@@ -126,7 +126,7 @@ fn integration_full_migration_scenario() {
     // Setup: MigrationConfig with H_a=100_000, H_c=152_560
     let config = MigrationConfig::with_recommended_grace(100_000);
     let h_a = config.announcement_height; // 100_000
-    let h_c = config.cutover_height;       // 152_560
+    let h_c = config.cutover_height; // 152_560
 
     // Generate PQ keypairs for migration targets
     let (pk1, sk1, commitment1) = gen_pq_keypair();
@@ -442,7 +442,11 @@ fn integration_multisig_migration() {
     // but our multisig witness won't pass single-sig parsing.
     // We need to verify the multisig spend predicate directly.
     assert!(
-        spend_pred_pq_multisig(&multisig_commitment, &sighash, &multisig_spend_tx.inputs[0].witness),
+        spend_pred_pq_multisig(
+            &multisig_commitment,
+            &sighash,
+            &multisig_spend_tx.inputs[0].witness
+        ),
         "After cutover: PQ multisig spend predicate should accept valid 2-of-3 witness"
     );
 
@@ -472,7 +476,7 @@ fn integration_multisig_migration() {
 fn integration_activation_sequence() {
     let config = MigrationConfig::with_recommended_grace(100_000);
     let h_a = config.announcement_height; // 100_000
-    let h_c = config.cutover_height;       // 152_560
+    let h_c = config.cutover_height; // 152_560
 
     let (pk1, sk1, commitment1) = gen_pq_keypair();
     let (_, _, commitment2) = gen_pq_keypair();
@@ -485,7 +489,10 @@ fn integration_activation_sequence() {
     );
 
     // Witness version 2 is recognized (WITNESS_VERSION constant)
-    assert_eq!(WITNESS_VERSION, 2, "PQ witness version should be 2 (Req 7.6)");
+    assert_eq!(
+        WITNESS_VERSION, 2,
+        "PQ witness version should be 2 (Req 7.6)"
+    );
 
     // Setup UTXO set with legacy outputs for testing all phases
     let mut utxo_set = UtxoSet::new();
@@ -671,5 +678,8 @@ fn integration_activation_sequence() {
     assert_eq!(get_phase(h_a, &config), MigrationPhase::GracePeriod);
     assert_eq!(get_phase(h_c - 1, &config), MigrationPhase::GracePeriod);
     assert_eq!(get_phase(h_c, &config), MigrationPhase::PostCutover);
-    assert_eq!(get_phase(h_c + 100_000, &config), MigrationPhase::PostCutover);
+    assert_eq!(
+        get_phase(h_c + 100_000, &config),
+        MigrationPhase::PostCutover
+    );
 }

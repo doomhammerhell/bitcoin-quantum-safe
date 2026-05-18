@@ -88,7 +88,8 @@ pub fn tagged_hash(tag: &str, data: &[u8]) -> [u8; 32] {
 ///
 /// # Panics
 ///
-/// Panics if `input_index >= tx.inputs.len()`.
+/// Panics if `input_index >= tx.inputs.len()` or if the index cannot be
+/// represented in the 4-byte consensus encoding.
 pub fn sighash_v2(tx: &Transaction, input_index: usize, spent_output: &Output) -> [u8; 32] {
     assert!(
         input_index < tx.inputs.len(),
@@ -96,6 +97,8 @@ pub fn sighash_v2(tx: &Transaction, input_index: usize, spent_output: &Output) -
         input_index,
         tx.inputs.len()
     );
+    let input_index_u32 =
+        u32::try_from(input_index).expect("input_index exceeds 4-byte consensus encoding");
 
     // Step 1: Tagged hash of all input outpoints.
     let hash_outpoints = {
@@ -128,7 +131,7 @@ pub fn sighash_v2(tx: &Transaction, input_index: usize, spent_output: &Output) -
     preimage.push(spent_output.script_version);
     preimage.extend_from_slice(&spent_output.commitment);
     preimage.extend_from_slice(&spent_output.value.to_le_bytes());
-    preimage.extend_from_slice(&(input_index as u32).to_le_bytes());
+    preimage.extend_from_slice(&input_index_u32.to_le_bytes());
     preimage.extend_from_slice(&tx.locktime.to_le_bytes());
 
     tagged_hash("PQWitness/sighash", &preimage)
@@ -384,14 +387,20 @@ mod tests {
     fn tagged_hash_different_tags_different_output() {
         let h1 = tagged_hash("PQWitness/outpoints", b"data");
         let h2 = tagged_hash("PQWitness/outputs", b"data");
-        assert_ne!(h1, h2, "different tags must produce different hashes for same data");
+        assert_ne!(
+            h1, h2,
+            "different tags must produce different hashes for same data"
+        );
     }
 
     #[test]
     fn tagged_hash_different_data_different_output() {
         let h1 = tagged_hash("PQWitness/sighash", b"data1");
         let h2 = tagged_hash("PQWitness/sighash", b"data2");
-        assert_ne!(h1, h2, "different data must produce different hashes for same tag");
+        assert_ne!(
+            h1, h2,
+            "different data must produce different hashes for same tag"
+        );
     }
 
     #[test]
@@ -399,7 +408,10 @@ mod tests {
         // PQWitness tags must produce different hashes than TapSighash tags
         let pq = tagged_hash("PQWitness/sighash", b"data");
         let tap = tagged_hash("TapSighash", b"data");
-        assert_ne!(pq, tap, "PQWitness tags must be domain-separated from BIP 341 tags");
+        assert_ne!(
+            pq, tap,
+            "PQWitness tags must be domain-separated from BIP 341 tags"
+        );
     }
 
     // -- Determinism --
@@ -537,10 +549,7 @@ mod tests {
         let tx = sample_tx();
         let h1 = sighash_v2(&tx, 0, &spent1);
         let h2 = sighash_v2(&tx, 0, &spent2);
-        assert_ne!(
-            h1, h2,
-            "changing spent output value must change sighash"
-        );
+        assert_ne!(h1, h2, "changing spent output value must change sighash");
     }
 
     // -- Panics on out-of-bounds input index --

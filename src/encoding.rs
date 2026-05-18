@@ -4,6 +4,8 @@
 //! Serialize/Parse (matching the Coq-verified definition), and multisig
 //! witness Serialize/Parse with canonical ordering constraints.
 
+use crate::params::MAX_WITNESS_SIZE;
+
 // ---------------------------------------------------------------------------
 // Bitcoin compact-size varint encoding
 // ---------------------------------------------------------------------------
@@ -374,6 +376,18 @@ mod tests {
 // Single-signature witness Serialize / Parse
 // ---------------------------------------------------------------------------
 
+/// Parsed single-signature witness components: `(public_key, signature)`.
+pub type WitnessComponents = (Vec<u8>, Vec<u8>);
+
+/// Result returned by the single-signature witness parser.
+pub type WitnessParseResult = Option<WitnessComponents>;
+
+/// Numeric parser trace emitted by the PO-8 refinement instrumentation.
+pub type WitnessTrace = Vec<u64>;
+
+/// Parser trace paired with the parser result observed on the same input.
+pub type WitnessTraceResult = (WitnessTrace, WitnessParseResult);
+
 /// Serialize a single-signature witness:
 /// `<pk_len: varint> <pk> <sig_len: varint> <sig>`.
 ///
@@ -397,6 +411,213 @@ pub fn serialize_witness(pk: &[u8], sig: &[u8]) -> Vec<u8> {
     out
 }
 
+const TRACE_START: u64 = 1;
+const TRACE_PK_DECODE_FAIL: u64 = 2;
+const TRACE_PK_DECODE_OK: u64 = 3;
+const TRACE_PK_LEN_CONVERSION_FAIL: u64 = 4;
+const TRACE_PK_LEN_EXCEEDS_REST: u64 = 5;
+const TRACE_PK_SLICE_OK: u64 = 6;
+const TRACE_SIG_DECODE_FAIL: u64 = 7;
+const TRACE_SIG_DECODE_OK: u64 = 8;
+const TRACE_SIG_LEN_CONVERSION_FAIL: u64 = 9;
+const TRACE_SIG_LEN_OR_TRAILING_MISMATCH: u64 = 10;
+const TRACE_COMPONENT_EMPTY: u64 = 11;
+const TRACE_ACCEPT: u64 = 12;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WitnessLayout {
+    pub(crate) pk_start: usize,
+    pub(crate) pk_len: usize,
+    pub(crate) sig_start: usize,
+    pub(crate) sig_len: usize,
+}
+
+fn trace_push(trace: &mut Option<&mut WitnessTrace>, event: u64) {
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.push(event);
+    }
+}
+
+fn trace_push2(trace: &mut Option<&mut WitnessTrace>, event: u64, value: u64) {
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.push(event);
+        trace.push(value);
+    }
+}
+
+fn trace_push3(trace: &mut Option<&mut WitnessTrace>, event: u64, value1: u64, value2: u64) {
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.push(event);
+        trace.push(value1);
+        trace.push(value2);
+    }
+}
+
+fn parse_witness_layout_impl(
+    w: &[u8],
+    mut trace: Option<&mut WitnessTrace>,
+) -> Option<WitnessLayout> {
+    trace_push2(&mut trace, TRACE_START, w.len() as u64);
+
+    let (pk_len_raw, pk_varint_size) = match decode_varint(w) {
+        Some(decoded) => decoded,
+        None => {
+            trace_push(&mut trace, TRACE_PK_DECODE_FAIL);
+            return None;
+        }
+    };
+    trace_push3(
+        &mut trace,
+        TRACE_PK_DECODE_OK,
+        pk_len_raw,
+        pk_varint_size as u64,
+    );
+
+    let pk_len = match usize::try_from(pk_len_raw) {
+        Ok(len) => len,
+        Err(_) => {
+            trace_push2(&mut trace, TRACE_PK_LEN_CONVERSION_FAIL, pk_len_raw);
+            return None;
+        }
+    };
+
+    let rest_after_pk_len = match w.get(pk_varint_size..) {
+        Some(rest) => rest,
+        None => {
+            trace_push3(&mut trace, TRACE_PK_LEN_EXCEEDS_REST, pk_len as u64, 0);
+            return None;
+        }
+    };
+
+    if pk_len > rest_after_pk_len.len() {
+        trace_push3(
+            &mut trace,
+            TRACE_PK_LEN_EXCEEDS_REST,
+            pk_len as u64,
+            rest_after_pk_len.len() as u64,
+        );
+        return None;
+    }
+
+    let pk_start = pk_varint_size;
+    let pk = &rest_after_pk_len[..pk_len];
+    trace_push3(
+        &mut trace,
+        TRACE_PK_SLICE_OK,
+        pk_len as u64,
+        rest_after_pk_len.len() as u64,
+    );
+
+    let rest_after_pk = &rest_after_pk_len[pk_len..];
+    let sig_len_start = pk_start.checked_add(pk_len)?;
+    let (sig_len_raw, sig_varint_size) = match decode_varint(rest_after_pk) {
+        Some(decoded) => decoded,
+        None => {
+            trace_push2(
+                &mut trace,
+                TRACE_SIG_DECODE_FAIL,
+                rest_after_pk.len() as u64,
+            );
+            return None;
+        }
+    };
+    trace_push3(
+        &mut trace,
+        TRACE_SIG_DECODE_OK,
+        sig_len_raw,
+        sig_varint_size as u64,
+    );
+
+    let sig_len = match usize::try_from(sig_len_raw) {
+        Ok(len) => len,
+        Err(_) => {
+            trace_push2(&mut trace, TRACE_SIG_LEN_CONVERSION_FAIL, sig_len_raw);
+            return None;
+        }
+    };
+
+    let rest_after_sig_len = match rest_after_pk.get(sig_varint_size..) {
+        Some(rest) => rest,
+        None => {
+            trace_push3(
+                &mut trace,
+                TRACE_SIG_LEN_OR_TRAILING_MISMATCH,
+                sig_len as u64,
+                0,
+            );
+            return None;
+        }
+    };
+
+    if sig_len > rest_after_sig_len.len() {
+        trace_push3(
+            &mut trace,
+            TRACE_SIG_LEN_OR_TRAILING_MISMATCH,
+            sig_len as u64,
+            rest_after_sig_len.len() as u64,
+        );
+        return None;
+    }
+
+    let sig_start = sig_len_start.checked_add(sig_varint_size)?;
+    let sig = &rest_after_sig_len[..sig_len];
+    let trailing = &rest_after_sig_len[sig_len..];
+
+    if pk.is_empty() || sig.is_empty() {
+        trace_push3(
+            &mut trace,
+            TRACE_COMPONENT_EMPTY,
+            pk.len() as u64,
+            sig.len() as u64,
+        );
+        return None;
+    }
+
+    if !trailing.is_empty() {
+        trace_push3(
+            &mut trace,
+            TRACE_SIG_LEN_OR_TRAILING_MISMATCH,
+            sig_len as u64,
+            rest_after_sig_len.len() as u64,
+        );
+        return None;
+    }
+
+    trace_push3(&mut trace, TRACE_ACCEPT, pk.len() as u64, sig.len() as u64);
+    Some(WitnessLayout {
+        pk_start,
+        pk_len,
+        sig_start,
+        sig_len,
+    })
+}
+
+pub(crate) fn parse_witness_layout(w: &[u8]) -> Option<WitnessLayout> {
+    parse_witness_layout_impl(w, None)
+}
+
+pub(crate) fn parse_consensus_witness_layout(w: &[u8]) -> Option<WitnessLayout> {
+    if w.len() > MAX_WITNESS_SIZE {
+        return None;
+    }
+
+    parse_witness_layout(w)
+}
+
+fn materialize_witness_layout(w: &[u8], layout: WitnessLayout) -> WitnessComponents {
+    let pk_end = layout.pk_start + layout.pk_len;
+    let sig_end = layout.sig_start + layout.sig_len;
+    (
+        w[layout.pk_start..pk_end].to_vec(),
+        w[layout.sig_start..sig_end].to_vec(),
+    )
+}
+
+fn parse_witness_impl(w: &[u8], trace: Option<&mut WitnessTrace>) -> WitnessParseResult {
+    let layout = parse_witness_layout_impl(w, trace)?;
+    Some(materialize_witness_layout(w, layout))
+}
+
 /// Parse a single-signature witness into `(pk, sig)`.
 ///
 /// The parse function matches the Coq-verified definition in
@@ -412,56 +633,55 @@ pub fn serialize_witness(pk: &[u8], sig: &[u8]) -> Vec<u8> {
 /// 8. Return `Some((pk, sig))`
 ///
 /// Returns `None` for any malformed, truncated, or empty-component witness.
-pub fn parse_witness(w: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    if w.is_empty() {
-        return None;
-    }
+pub fn parse_witness(w: &[u8]) -> WitnessParseResult {
+    parse_witness_impl(w, None)
+}
 
-    // Step 1: decode the varint pk_len
-    let (pk_len, pk_varint_size) = decode_varint(w)?;
-    let pk_len = usize::try_from(pk_len).ok()?;
+/// Parse a consensus-valid single-signature witness.
+///
+/// This is the protocol-domain parser used by PO-8 refinement: it applies the
+/// consensus witness-size guard before delegating to the byte-level parser.
+/// While [`parse_witness`] accepts any syntactically valid CompactSize witness,
+/// consensus validation rejects witnesses above [`MAX_WITNESS_SIZE`] before
+/// parsing. Because `MAX_WITNESS_SIZE <= u16::MAX`, every accepted witness in
+/// this domain stays inside the current Coq compact-size model.
+pub fn parse_consensus_witness(w: &[u8]) -> WitnessParseResult {
+    let layout = parse_consensus_witness_layout(w)?;
+    Some(materialize_witness_layout(w, layout))
+}
 
-    // Step 2: get remaining bytes after pk_len varint
-    let rest_after_pk_len = w.get(pk_varint_size..)?;
-
-    // Step 3: extract pk
-    if pk_len > rest_after_pk_len.len() {
-        return None;
-    }
-    let pk = &rest_after_pk_len[..pk_len];
-
-    // Step 4: decode sig_len from remaining bytes
-    let rest_after_pk = &rest_after_pk_len[pk_len..];
-    let (sig_len, sig_varint_size) = decode_varint(rest_after_pk)?;
-    let sig_len = usize::try_from(sig_len).ok()?;
-
-    // Step 5: extract sig
-    let sig_start = sig_varint_size;
-    if sig_start + sig_len != rest_after_pk.len() {
-        return None;
-    }
-    let sig = &rest_after_pk[sig_start..sig_start + sig_len];
-
-    // Step 6: reject empty components
-    if pk.is_empty() || sig.is_empty() {
-        return None;
-    }
-
-    Some((pk.to_vec(), sig.to_vec()))
+/// Parse a single-signature witness and emit a numeric operational trace.
+///
+/// This is a verification hook used by the PO-8 refinement harness. The public
+/// parser and this function share the same implementation core, so the trace is
+/// an instrumentation of the deployed parser logic rather than a second parser.
+#[doc(hidden)]
+pub fn parse_witness_trace(w: &[u8]) -> WitnessTraceResult {
+    let mut trace = Vec::new();
+    let parsed = parse_witness_layout_impl(w, Some(&mut trace))
+        .map(|layout| materialize_witness_layout(w, layout));
+    (trace, parsed)
 }
 
 /// Check whether a witness is in canonical form.
 ///
-/// A witness is canonical iff re-serializing its parsed components produces
-/// the exact same byte sequence. This enforces encoding uniqueness and
-/// prevents transaction malleability (Requirement 11.4).
+/// A witness is canonical iff the layout parser accepts it. The parser rejects
+/// non-minimal CompactSize encodings, empty components, truncation, and trailing
+/// bytes, so acceptance is equivalent to re-serialization identity without
+/// allocating a second witness buffer.
 ///
 /// Returns `false` for any witness that fails to parse.
 pub fn is_canonical_witness(w: &[u8]) -> bool {
-    match parse_witness(w) {
-        None => false,
-        Some((pk, sig)) => serialize_witness(&pk, &sig) == w,
-    }
+    parse_witness_layout(w).is_some()
+}
+
+/// Check canonicality in the consensus witness domain.
+///
+/// This predicate makes the PO-8 trust boundary executable: witnesses outside
+/// the consensus size cap are not in the verified Coq/Rust correspondence
+/// subset, even if the general Rust CompactSize parser can decode them.
+pub fn is_canonical_consensus_witness(w: &[u8]) -> bool {
+    parse_consensus_witness_layout(w).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -651,6 +871,55 @@ mod witness_tests {
     fn non_canonical_unparseable_witness() {
         // pk_len = 5 but only 2 bytes follow
         assert!(!is_canonical_witness(&[0x05, 0x01, 0x02]));
+    }
+
+    #[test]
+    fn parse_witness_trace_matches_public_parser() {
+        let valid = serialize_witness(&[0x01, 0x02, 0x03], &[0xAA, 0xBB]);
+        let mut trailing = valid.clone();
+        trailing.push(0xFF);
+
+        let cases = vec![
+            valid,
+            vec![],
+            vec![0x00, 0xAA],
+            vec![0x01, 0xAA, 0x00],
+            vec![0xFD, 0x01, 0x00, 0xAA, 0x01, 0xBB],
+            trailing,
+        ];
+
+        for witness in cases {
+            let (trace, traced_result) = parse_witness_trace(&witness);
+            assert!(!trace.is_empty());
+            assert_eq!(traced_result, parse_witness(&witness));
+        }
+    }
+
+    #[test]
+    fn consensus_witness_parser_enforces_formal_domain_guard() {
+        // Exactly MAX_WITNESS_SIZE bytes: 1-byte pk length, 1 pk byte,
+        // 3-byte sig length, and 15,995 signature bytes.
+        let max_domain = serialize_witness(&[0xAA], &vec![0xBB; MAX_WITNESS_SIZE - 5]);
+        assert_eq!(max_domain.len(), MAX_WITNESS_SIZE);
+        assert!(parse_witness(&max_domain).is_some());
+        assert!(parse_consensus_witness(&max_domain).is_some());
+        assert!(is_canonical_consensus_witness(&max_domain));
+
+        // One byte above consensus max is still syntactically parseable by the
+        // general Rust parser, but it is outside the verified consensus subset.
+        let oversized = serialize_witness(&[0xAA], &vec![0xBB; MAX_WITNESS_SIZE - 4]);
+        assert_eq!(oversized.len(), MAX_WITNESS_SIZE + 1);
+        assert!(parse_witness(&oversized).is_some());
+        assert_eq!(parse_consensus_witness(&oversized), None);
+        assert!(!is_canonical_consensus_witness(&oversized));
+
+        // The full CompactSize 0xFE branch remains implemented by Rust but is
+        // outside the current consensus-valid Coq witness model.
+        let full_compact_size = serialize_witness(&vec![0xCC; 65_536], &[0xDD]);
+        assert_eq!(full_compact_size[0], 0xFE);
+        assert!(parse_witness(&full_compact_size).is_some());
+        assert_eq!(parse_consensus_witness(&full_compact_size), None);
+        assert!(!is_canonical_consensus_witness(&full_compact_size));
     }
 }
 

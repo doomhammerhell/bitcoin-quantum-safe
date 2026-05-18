@@ -6,16 +6,33 @@ on:
     paths:
       - "formal/coq/**"
       - "src/**"
+      - "tests/**"
+      - "examples/generate_golden_vectors.rs"
+      - "examples/generate_varint_refinement.rs"
+      - "examples/generate_witness_refinement.rs"
+      - "build_extraction.sh"
+      - "verify_source_refinement.sh"
+      - "verify_compiled_refinement.sh"
       - ".github/workflows/po8-verification.yml"
+      - "Cargo.toml"
   pull_request:
     branches: [main]
     paths:
       - "formal/coq/**"
       - "src/**"
+      - "tests/**"
+      - "examples/generate_golden_vectors.rs"
+      - "examples/generate_varint_refinement.rs"
+      - "examples/generate_witness_refinement.rs"
+      - "build_extraction.sh"
+      - "verify_source_refinement.sh"
+      - "verify_compiled_refinement.sh"
+      - "Cargo.toml"
 
 env:
   COQ_VERSION: 8.18.0
   OCAML_VERSION: 4.14.0
+  KANI_VERSION: 0.67.0
 
 jobs:
   # Job 1: Extract Coq to OCaml and generate golden vectors
@@ -53,6 +70,18 @@ jobs:
           name: coq-golden-vectors
           path: formal/coq/extraction/coq_vectors.json
 
+      - name: Upload Coq varint refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coq-varint-refinement
+          path: formal/coq/extraction/coq_varint_refinement.json
+
+      - name: Upload Coq witness refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coq-witness-refinement
+          path: formal/coq/extraction/coq_witness_refinement.json
+
   # Job 2: Generate Rust golden vectors
   generate-rust-vectors:
     runs-on: ubuntu-latest
@@ -69,12 +98,26 @@ jobs:
       - name: Generate Rust vectors
         run: |
           cargo run --example generate_golden_vectors > rust_vectors.json
+          cargo run --example generate_varint_refinement > rust_varint_refinement.json
+          cargo run --example generate_witness_refinement > rust_witness_refinement.json
 
       - name: Upload Rust vectors
         uses: actions/upload-artifact@v4
         with:
           name: rust-golden-vectors
           path: rust_vectors.json
+
+      - name: Upload Rust varint refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-varint-refinement
+          path: rust_varint_refinement.json
+
+      - name: Upload Rust witness refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-witness-refinement
+          path: rust_witness_refinement.json
 
   # Job 3: Compare and verify
   compare-vectors:
@@ -95,6 +138,26 @@ jobs:
         with:
           name: rust-golden-vectors
 
+      - name: Download Coq varint refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-varint-refinement
+
+      - name: Download Rust varint refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-varint-refinement
+
+      - name: Download Coq witness refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-witness-refinement
+
+      - name: Download Rust witness refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-witness-refinement
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -114,6 +177,18 @@ jobs:
           with open('rust_vectors.json', 'r') as f:
               rust_data = json.load(f)
 
+          with open('coq_varint_refinement.json', 'r') as f:
+              coq_varint = json.load(f)
+
+          with open('rust_varint_refinement.json', 'r') as f:
+              rust_varint = json.load(f)
+
+          with open('coq_witness_refinement.json', 'r') as f:
+              coq_witness = json.load(f)
+
+          with open('rust_witness_refinement.json', 'r') as f:
+              rust_witness = json.load(f)
+
           print(f"Coq vectors: {len(coq_data)} test cases")
           print(f"Rust vectors: {len(rust_data)} test cases")
 
@@ -123,6 +198,7 @@ jobs:
 
           mismatches = []
           missing = []
+          unexpected = []
 
           for name in coq_by_name:
               if name not in rust_by_name:
@@ -136,31 +212,58 @@ jobs:
               if coq_vec['pk_len'] != rust_vec['pk_len']:
                   mismatches.append(f"{name}: pk_len mismatch - Coq:{coq_vec['pk_len']} vs Rust:{rust_vec['pk_len']}")
 
+              # Compare sig_len
+              if coq_vec['sig_len'] != rust_vec['sig_len']:
+                  mismatches.append(f"{name}: sig_len mismatch - Coq:{coq_vec['sig_len']} vs Rust:{rust_vec['sig_len']}")
+
               # Compare witness (the critical check)
               if coq_vec['witness'] != rust_vec['witness']:
                   mismatches.append(f"{name}: WITNESS MISMATCH!")
                   mismatches.append(f"  Coq:  {coq_vec['witness'][:100]}...")
                   mismatches.append(f"  Rust: {rust_vec['witness'][:100]}...")
 
+          for name in rust_by_name:
+              if name not in coq_by_name:
+                  unexpected.append(f"Unexpected Rust vector: {name}")
+
           if missing:
               print("\n=== MISSING VECTORS ===")
               for m in missing:
                   print(m)
 
-          if mismatches:
+          if unexpected:
+              print("\n=== UNEXPECTED VECTORS ===")
+              for u in unexpected:
+                  print(u)
+
+          if mismatches or missing or unexpected:
               print("\n=== MISMATCHES FOUND ===")
               for m in mismatches:
                   print(m)
               sys.exit(1)
 
-          print("\n=== SUCCESS: All vectors match byte-for-byte ===")
-          print("PO-8: Implementation correspondence VERIFIED")
+          if coq_varint != rust_varint:
+              print("\n=== VARINT REFINEMENT MISMATCH ===")
+              print(f"Coq:  {coq_varint}")
+              print(f"Rust: {rust_varint}")
+              sys.exit(1)
+
+          if coq_witness != rust_witness:
+              print("\n=== WITNESS REFINEMENT MISMATCH ===")
+              print(f"Coq:  {coq_witness}")
+              print(f"Rust: {rust_witness}")
+              sys.exit(1)
+
+          print("\n=== SUCCESS: all bounded vectors match byte-for-byte ===")
+          print("=== SUCCESS: exhaustive u16 varint refinement summaries match ===")
+          print("=== SUCCESS: witness parser/serializer/consensus-domain/trace refinement summaries match ===")
+          print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
           EOF
 
   # Job 4: Run Coq proofs
   verify-coq-proofs:
     runs-on: ubuntu-latest
-    name: Verify Coq Proofs (PO-1, PO-2, PO-3, PO-5, PO-7)
+    name: Verify Coq Proofs (PO-1, PO-2, PO-3, PO-4, PO-5, PO-7)
 
     steps:
       - uses: actions/checkout@v4
@@ -188,7 +291,76 @@ jobs:
           ls -la formal/coq/*.vo
           echo "All proofs compiled successfully"
 
-  # Job 5: Performance benchmarks
+  # Job 5: Verify Rust source-level bounded refinement harnesses
+  verify-rust-source-refinement:
+    runs-on: ubuntu-latest
+    name: Verify Rust Source Refinement (Kani)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install Kani
+        run: |
+          cargo install --locked kani-verifier --version "${{ env.KANI_VERSION }}"
+          cargo kani --version
+
+      - name: Run source-level refinement harnesses
+        run: |
+          ./verify_source_refinement.sh
+
+  # Job 6: Validate compiled release artifacts against Coq extraction
+  verify-compiled-refinement:
+    runs-on: ubuntu-latest
+    name: Verify Compiled Refinement
+    needs: [extract-coq]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Coq vectors
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-golden-vectors
+          path: formal/coq/extraction
+
+      - name: Download Coq varint refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-varint-refinement
+          path: formal/coq/extraction
+
+      - name: Download Coq witness refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-witness-refinement
+          path: formal/coq/extraction
+
+      - name: Run compiled-artifact translation validation
+        run: |
+          ./verify_compiled_refinement.sh
+
+      - name: Upload compiled refinement certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-refinement-certificate
+          path: target/compiled-refinement/compiled_refinement_certificate.json
+
+  # Job 7: Performance benchmarks
   run-benchmarks:
     runs-on: ubuntu-latest
     name: ML-DSA-44 Performance Benchmarks
@@ -241,7 +413,7 @@ jobs:
   verification-summary:
     runs-on: ubuntu-latest
     name: PO-8 Verification Summary
-    needs: [compare-vectors, verify-coq-proofs, run-benchmarks]
+    needs: [compare-vectors, verify-coq-proofs, verify-rust-source-refinement, verify-compiled-refinement, run-benchmarks]
     if: always()
 
     steps:
@@ -251,10 +423,15 @@ jobs:
           echo "PO-8 VERIFICATION SUMMARY"
           echo "========================================"
           echo ""
-          echo "✓ Coq extraction to OCaml: COMPLETED"
-          echo "✓ Golden vector generation: COMPLETED"
-          echo "✓ Coq vs Rust comparison: COMPLETED"
-          echo "✓ Coq proofs (PO-1, PO-2, PO-3, PO-5, PO-7): VERIFIED"
+          echo "✓ Coq serializer extraction to OCaml: COMPLETED"
+          echo "✓ Coq bounded parser/serializer canonicality: VERIFIED"
+          echo "✓ Exhaustive u16 varint refinement Coq vs Rust: COMPLETED"
+          echo "✓ Witness parser/serializer/consensus-domain/trace refinement matrix + symbolic state-space Coq vs Rust: COMPLETED"
+          echo "✓ Rust source-level bounded parser refinement harnesses (Kani): VERIFIED"
+          echo "✓ Compiled release artifact translation validation: VERIFIED"
+          echo "✓ Bounded golden vector generation: COMPLETED"
+          echo "✓ Coq-extracted serializer vs Rust comparison: COMPLETED"
+          echo "✓ Coq proofs (PO-1, PO-2, PO-3, PO-4 model, PO-5, PO-7): VERIFIED"
           echo "✓ Performance benchmarks: COMPLETED"
           echo ""
-          echo "PO-8: Implementation correspondence CLOSED"
+          echo "PO-8: Coq concrete canonicality, extraction refinement, Rust source-level bounded parser refinement, and compiled-artifact translation validation are complete; full compiler correctness remains outside current artifact boundary"

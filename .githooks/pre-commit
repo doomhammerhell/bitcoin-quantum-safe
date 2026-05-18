@@ -12,7 +12,7 @@ echo "=========================================="
 echo ""
 echo "[1/5] Checking Rust code..."
 cargo check --all-targets --all-features 2>&1 | grep -E "(error|warning:)" || true
-cargo clippy -- -D warnings 2>&1 || {
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 || {
     echo "❌ Rust clippy failed"
     exit 1
 }
@@ -31,19 +31,27 @@ make all 2>&1 || {
 cd ../..
 echo "✓ Coq proofs OK"
 
-# Check 3: Test golden vectors exist
+# Check 3: Regenerate and compare PO-8 extraction artifacts
 echo ""
-echo "[3/5] Checking golden vectors..."
-if [ ! -f "formal/coq/extraction/golden_vectors_embedded.json" ]; then
-    echo "❌ golden_vectors_embedded.json not found"
+echo "[3/5] Checking PO-8 extraction artifacts..."
+opam exec -- bash ./build_extraction.sh 2>&1 || {
+    echo "❌ PO-8 extraction/vector comparison failed"
+    exit 1
+}
+./verify_compiled_refinement.sh 2>&1 || {
+    echo "❌ Compiled PO-8 refinement validation failed"
+    exit 1
+}
+if ! git diff --quiet -- formal/coq/extraction/coq_vectors.json rust_vectors.json; then
+    echo "❌ Golden vectors changed after regeneration; stage the updated vectors"
     exit 1
 fi
-echo "✓ Golden vectors OK"
+echo "✓ PO-8 extraction artifacts OK"
 
 # Check 4: Rust tests pass
 echo ""
 echo "[4/5] Running Rust tests..."
-cargo test --lib 2>&1 || {
+cargo test 2>&1 || {
     echo "❌ Rust tests failed"
     exit 1
 }
@@ -66,7 +74,7 @@ echo ""
 echo "Summary:"
 echo "- Rust code: ✓"
 echo "- Coq proofs: ✓"
-echo "- Golden vectors: ✓"
+echo "- PO-8 extraction artifacts: ✓"
 echo "- Rust tests: ✓"
 echo "- Workflows: ✓"
 echo ""

@@ -91,9 +91,8 @@ pub fn weight_tx(tx: &Transaction) -> u64 {
     //   version (4) + locktime (4) + input_count varint (~1) + output_count varint (~1) = ~10 bytes
     //   + per input: outpoint (36 bytes)
     //   + per output: script_version (1) + commitment (32) + value (8) = 41 bytes
-    let non_witness_bytes: u64 = 10
-        + (tx.inputs.len() as u64) * 36
-        + (tx.outputs.len() as u64) * 41;
+    let non_witness_bytes: u64 =
+        10 + (tx.inputs.len() as u64) * 36 + (tx.outputs.len() as u64) * 41;
 
     // Witness bytes (at 1 WU/byte):
     let witness_bytes: u64 = tx
@@ -134,7 +133,7 @@ pub fn verify_cost_bound(tx: &Transaction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{OutPoint, TxInput, TxOutput, Transaction};
+    use crate::types::{OutPoint, Transaction, TxInput, TxOutput};
 
     /// Helper: create a transaction with the given witness sizes and output count.
     fn make_tx(witness_sizes: &[usize], num_outputs: usize) -> Transaction {
@@ -312,7 +311,7 @@ mod tests {
         let tx_cost = cost_tx(&tx);
         let count = (C_MAX / tx_cost) as usize;
         let block: Block = vec![tx; count];
-        let total: u64 = block.iter().map(|t| cost_tx(t)).sum();
+        let total: u64 = block.iter().map(cost_tx).sum();
         assert!(total <= C_MAX);
         assert!(check_block_cost(&block));
     }

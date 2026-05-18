@@ -40,7 +40,8 @@ pub use types::{Block, Commitment, PubKey, ScriptType, Signature, Transaction, U
 
 // Encoding: witness serialization and parsing (Req 2.3, 6.5, 11.1–11.5)
 pub use encoding::{
-    parse_multisig_witness, parse_witness, serialize_multisig_witness, serialize_witness,
+    is_canonical_consensus_witness, parse_consensus_witness, parse_multisig_witness, parse_witness,
+    serialize_multisig_witness, serialize_witness,
 };
 
 // Spend predicates (Req 2.4–2.9, 6.2, 6.5, 6.6, 6.8)
@@ -67,6 +68,9 @@ pub use params::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod kani_proofs;
 
 // ---------------------------------------------------------------------------
 // Transaction validation and UTXO transitions (Task 11.1)
@@ -279,7 +283,7 @@ pub fn valid_block(
 #[cfg(test)]
 mod validation_tests {
     use super::*;
-    use crate::types::{OutPoint, Output, TxInput, TxOutput, Transaction};
+    use crate::types::{OutPoint, Output, Transaction, TxInput, TxOutput};
 
     /// Helper: create a MigrationConfig with H_a=100_000 and recommended grace.
     fn test_config() -> MigrationConfig {

@@ -1,7 +1,8 @@
 //! Golden Vector Generator for PO-8 Verification
 //!
-//! This executable produces canonical test vectors from the Rust implementation
-//! that must match the Coq-extracted OCaml implementation byte-for-byte.
+//! This executable produces the Rust side of the bounded PO-8 golden vectors.
+//! The vector set mirrors the Coq-extracted serializer harness and stays within
+//! the current formal varint domain: compact-size single-byte and 0xFD/u16.
 //!
 //! Usage: cargo run --example generate_golden_vectors > rust_vectors.json
 

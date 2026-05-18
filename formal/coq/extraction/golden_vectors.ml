@@ -1,7 +1,9 @@
-(* golden_vectors.ml: Golden test vector generator for PO-8 verification
+(* golden_vectors.ml: Golden test vector generator for bounded PO-8 evidence
  *
- * This executable produces canonical test vectors that must match the Rust
- * implementation byte-for-byte. The output is JSON-formatted for CI comparison.
+ * This executable defines fixed vector inputs and emits JSON for CI comparison.
+ * Witness bytes are produced by the Coq-extracted serializer in
+ * golden_vectors_extracted.ml. The current formal varint model covers the
+ * Bitcoin compact-size single-byte and 0xFD/u16 cases, i.e. lengths <= 65535.
  *
  * Copyright (c) 2026 Mayckon Giovani. MIT License.
  *)
@@ -13,23 +15,11 @@ let hex_of_byte n =
 let string_of_bytes bytes =
   String.concat "" (List.map hex_of_byte bytes)
 
-(* Bitcoin compact-size varint encoding *)
-let encode_varint (n : int) : int list =
-  if n <= 252 then
-    [n]
-  else if n <= 0xFFFF then
-    [0xFD; n land 0xFF; (n lsr 8) land 0xFF]
-  else if n <= 0xFFFFFFFF then
-    [0xFE; n land 0xFF; (n lsr 8) land 0xFF; (n lsr 16) land 0xFF; (n lsr 24) land 0xFF]
-  else
-    [0xFF; n land 0xFF; (n lsr 8) land 0xFF; (n lsr 16) land 0xFF; (n lsr 24) land 0xFF;
-     (n lsr 32) land 0xFF; (n lsr 40) land 0xFF; (n lsr 48) land 0xFF; (n lsr 56) land 0xFF]
-
-(* Witness serialization: pk_len || pk || sig_len || sig *)
-let serialize_witness (pk : int list) (signature : int list) : int list =
-  let pk_len = encode_varint (List.length pk) in
-  let sig_len = encode_varint (List.length signature) in
-  pk_len @ pk @ sig_len @ signature
+(* Witness serialization: pk_len || pk || sig_len || sig.
+   The implementation is extracted from Coq; this file only supplies inputs
+   and JSON formatting. *)
+let serialize_witness =
+  Golden_vectors_extracted.WitnessExtraction.extract_serialize_witness
 
 (* Repeat element n times *)
 let rec repeat x n =

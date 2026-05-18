@@ -6,7 +6,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::encoding::{parse_multisig_witness, parse_witness, serialize_witness};
+use crate::encoding::{parse_consensus_witness, parse_multisig_witness, serialize_witness};
 use crate::params::MAX_WITNESS_SIZE;
 use crate::types::Commitment;
 
@@ -47,7 +47,7 @@ pub fn spend_pred_pq(commitment: &Commitment, message: &[u8], witness: &[u8]) ->
     }
 
     // Step 2: Parse — reject malformed encodings (Req 2.4)
-    let (pk, sig) = match parse_witness(witness) {
+    let (pk, sig) = match parse_consensus_witness(witness) {
         Some(pair) => pair,
         None => return false,
     };
@@ -192,7 +192,7 @@ mod tests {
         let pk_bytes = pk.into_bytes().to_vec();
 
         let commitment: Commitment = Sha256::digest(&pk_bytes).into();
-        let witness = serialize_witness(&pk_bytes, &sig.to_vec());
+        let witness = serialize_witness(&pk_bytes, sig.as_ref());
 
         (commitment, witness)
     }
@@ -354,14 +354,19 @@ mod multisig_tests {
         k: u8,
         n: usize,
         message: &[u8],
-    ) -> (Commitment, Vec<u8>, Vec<Vec<u8>>, Vec<ml_dsa_44::PrivateKey>) {
+    ) -> (
+        Commitment,
+        Vec<u8>,
+        Vec<Vec<u8>>,
+        Vec<ml_dsa_44::PrivateKey>,
+    ) {
         let (pks, sks) = make_keypairs(n);
         let commitment = multisig_commitment(&pks);
 
         let mut sigs = Vec::with_capacity(k as usize);
         let mut indices: Vec<u8> = Vec::with_capacity(k as usize);
-        for i in 0..(k as usize) {
-            let sig = sks[i].try_sign(message, &[]).unwrap();
+        for (i, sk) in sks.iter().enumerate().take(k as usize) {
+            let sig = sk.try_sign(message, &[]).unwrap();
             sigs.push(sig.to_vec());
             indices.push(i as u8);
         }
@@ -396,7 +401,11 @@ mod multisig_tests {
     fn spend_pred_pq_multisig_rejects_wrong_message() {
         let message = b"correct multisig message";
         let (commitment, witness, _, _) = make_valid_multisig_spend(2, 3, message);
-        assert!(!spend_pred_pq_multisig(&commitment, b"wrong message", &witness));
+        assert!(!spend_pred_pq_multisig(
+            &commitment,
+            b"wrong message",
+            &witness
+        ));
     }
 
     // -- Corrupted signature rejection --

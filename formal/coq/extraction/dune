@@ -1,13 +1,17 @@
 (executable
  (name golden_vectors)
- (public_name golden_vectors)
- (libraries unix)
+ (modules golden_vectors golden_vectors_extracted)
  (flags (:standard -w -27-32-33-39))
 )
 
-(install
- (section bin)
- (files (golden_vectors.exe as golden_vectors)))
-```
+(executable
+ (name varint_refinement)
+ (modules varint_refinement golden_vectors_extracted)
+ (flags (:standard -w -27-32-33-39))
+)
 
-</file_path>
+(executable
+ (name witness_refinement)
+ (modules witness_refinement golden_vectors_extracted)
+ (flags (:standard -w -27-32-33-39))
+)

@@ -264,11 +264,13 @@ Lemma length_skipn : forall {A : Type} (n : nat) (l : list A),
   n <= length l ->
   length (skipn n l) = length l - n.
 Proof.
-  (* Proof by induction on n.
-     Base case n=0: skipn 0 l = l, so length (skipn 0 l) = length l = length l - 0.
-     Inductive step: For n=S n', skipn (S n') l = skipn n' (tail l).
-     The length decreases by 1 each step, giving length l - n. *)
-Admitted.
+  intros A n.
+  induction n as [| n IH]; intros l Hle.
+  - simpl. lia.
+  - destruct l as [| x xs].
+    + simpl in Hle. lia.
+    + simpl in Hle. simpl. rewrite IH; lia.
+Qed.
 
 Lemma firstn_skipn_app : forall {A : Type} (n : nat) (l : list A),
   firstn n l ++ skipn n l = l.

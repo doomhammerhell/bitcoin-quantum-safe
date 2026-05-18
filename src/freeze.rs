@@ -77,7 +77,7 @@ pub fn check_no_frozen_inputs(
 mod tests {
     use super::*;
     use crate::params::MigrationConfig;
-    use crate::types::{OutPoint, Output, TxInput, TxOutput, Transaction, UtxoSet};
+    use crate::types::{OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet};
 
     /// Helper: create a MigrationConfig with H_a=100_000, H_c=152_560
     /// (recommended ~1 year grace period).
@@ -350,7 +350,12 @@ mod tests {
             }],
             locktime: 0,
         };
-        assert!(check_no_frozen_inputs(152_559, &migrate_tx, &utxo_set, &config));
+        assert!(check_no_frozen_inputs(
+            152_559,
+            &migrate_tx,
+            &utxo_set,
+            &config
+        ));
 
         // At cutover: all remaining legacy outputs become frozen
         for op in &exchange_ops {
@@ -372,7 +377,9 @@ mod tests {
             }],
             locktime: 0,
         };
-        assert!(!check_no_frozen_inputs(152_560, &spend_tx, &utxo_set, &config));
+        assert!(!check_no_frozen_inputs(
+            152_560, &spend_tx, &utxo_set, &config
+        ));
 
         // Frozen outputs remain in the UTXO set (not removed)
         for op in &exchange_ops {

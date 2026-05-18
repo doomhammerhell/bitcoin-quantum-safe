@@ -35,18 +35,37 @@ Import ListNotations.
 (** * Part I: Definitions                                              *)
 (* ================================================================= *)
 
+(** CompactSize constants for the bounded model. They are named so extraction
+    can map them to native OCaml integers instead of rebuilding unary numerals
+    in the exhaustive refinement harness. *)
+Definition compact_single_max : nat := 252.
+Definition compact_fd_marker : nat := 253.
+Definition byte_max : nat := 255.
+Definition byte_base : nat := 256.
+
 (** Maximum value representable in the u16 range.
     We use [255 + 255 * 256] instead of the literal [65535] to keep
     arithmetic within reach of [lia]/[nia] (large nat literals cause
     stack-overflow warnings and tactic failures in Rocq 9.x). *)
 Definition max_u16 : nat := 255 + 255 * 256.
 
+(** Consensus witness-size cap mirrored from [src/params.rs].
+    This bound is intentionally below [max_u16], so consensus-accepted witness
+    components do not require the 0xFE/0xFF CompactSize cases for PO-8. *)
+Definition max_witness_size : nat := 16 * 1000.
+
+Theorem max_witness_size_within_varint_model :
+  max_witness_size <= max_u16.
+Proof.
+  unfold max_witness_size, max_u16. lia.
+Qed.
+
 (** Encode a natural number using Bitcoin compact-size varint.
     Matches [encode_varint] in [src/encoding.rs] for the 1-byte and
     3-byte (0xFD prefix) cases. *)
 Definition encode_len_multi (n : nat) : list nat :=
-  if n <=? 252 then [n]
-  else if n <=? max_u16 then [253; n mod 256; n / 256]
+  if n <=? compact_single_max then [n]
+  else if n <=? max_u16 then [compact_fd_marker; n mod byte_base; n / byte_base]
   else []. (* unreachable for witness pk_len values *)
 
 (** Decode a compact-size varint from the front of a byte list.
@@ -60,13 +79,13 @@ Definition decode_len_multi (bs : list nat) : option (nat * nat) :=
   match bs with
   | [] => None
   | first :: rest =>
-    if first <=? 252 then Some (first, 1)
-    else if Nat.eqb first 253 then
+    if first <=? compact_single_max then Some (first, 1)
+    else if Nat.eqb first compact_fd_marker then
       match rest with
       | lo :: hi :: _ =>
-        if (lo <=? 255) && (hi <=? 255) then
-          let v := lo + hi * 256 in
-          if 253 <=? v then Some (v, 3)
+        if (lo <=? byte_max) && (hi <=? byte_max) then
+          let v := lo + hi * byte_base in
+          if compact_fd_marker <=? v then Some (v, 3)
           else None  (* non-canonical: value fits in single byte *)
         else None    (* invalid byte range *)
       | _ => None    (* truncated *)
@@ -147,10 +166,10 @@ Proof.
   intros n Hn.
   destruct (Nat.le_gt_cases n 252) as [Hle | Hgt].
   - (* Case: n <= 252 — single-byte encoding *)
-    unfold encode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     assert (H1 : (n <=? 252) = true) by (apply Nat.leb_le; lia).
     rewrite H1.
-    unfold decode_len_multi. simpl.
+    unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max. simpl.
     rewrite H1. reflexivity.
   - (* Case: 253 <= n <= max_u16 — three-byte encoding *)
     assert (H1 : (n <=? 252) = false) by (apply Nat.leb_gt; lia).
@@ -162,8 +181,8 @@ Proof.
     assert (Hrecon : n mod 256 + n / 256 * 256 = n)
       by (apply div_mod_reconstruct).
     assert (H7 : (253 <=? n) = true) by (apply Nat.leb_le; lia).
-    unfold encode_len_multi. rewrite H1, H2.
-    unfold decode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max. rewrite H1, H2.
+    unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     cbv beta iota.
     rewrite H5. cbv beta iota.
     rewrite H6. cbv beta iota.
@@ -178,7 +197,7 @@ Theorem encode_len_pos_multi : forall (n : nat),
   length (encode_len_multi n) >= 1.
 Proof.
   intros n Hn.
-  unfold encode_len_multi.
+  unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
   destruct (n <=? 252) eqn:H1; simpl; [lia |].
   assert (H2 : (n <=? max_u16) = true) by (apply Nat.leb_le; lia).
   rewrite H2. simpl. lia.
@@ -194,9 +213,10 @@ Proof.
   intros n tail Hn.
   destruct (Nat.le_gt_cases n 252) as [Hle | Hgt].
   - (* Case: n <= 252 *)
-    unfold encode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     assert (H1 : (n <=? 252) = true) by (apply Nat.leb_le; lia).
     rewrite H1. simpl.
+    unfold compact_single_max, compact_fd_marker, byte_base, byte_max.
     rewrite H1. reflexivity.
   - (* Case: 253 <= n <= max_u16 *)
     assert (H1 : (n <=? 252) = false) by (apply Nat.leb_gt; lia).
@@ -208,12 +228,12 @@ Proof.
     assert (Hrecon : n mod 256 + n / 256 * 256 = n)
       by (apply div_mod_reconstruct).
     assert (H7 : (253 <=? n) = true) by (apply Nat.leb_le; lia).
-    unfold encode_len_multi. rewrite H1, H2.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max. rewrite H1, H2.
     (* encode = [253; n mod 256; n / 256] *)
     (* encode ++ tail = 253 :: n mod 256 :: n / 256 :: tail *)
     change ([253; n mod 256; n / 256] ++ tail)
       with (253 :: (n mod 256) :: (n / 256) :: tail).
-    unfold decode_len_multi.
+    unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     cbv beta iota.
     rewrite H5. cbv beta iota.
     rewrite H6. cbv beta iota.
@@ -229,7 +249,7 @@ Theorem decode_len_prefix_multi : forall (bs : list nat) (v consumed : nat),
 Proof.
   intros bs v consumed Hdec.
   destruct bs as [| first rest]; [simpl in Hdec; discriminate |].
-  unfold decode_len_multi in Hdec.
+  unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max in Hdec.
   destruct (first <=? 252) eqn:Hle.
   - (* Single-byte case: consumed = 1 *)
     injection Hdec as Hv Hc. subst. simpl. lia.
@@ -254,11 +274,11 @@ Theorem decode_len_canonical_multi : forall (bs : list nat) (v consumed : nat),
 Proof.
   intros bs v consumed Hdec.
   destruct bs as [| first rest]; [simpl in Hdec; discriminate |].
-  unfold decode_len_multi in Hdec.
+  unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max in Hdec.
   destruct (first <=? 252) eqn:Hle.
   - (* Single-byte case: first <= 252 *)
     injection Hdec as Hv Hc. subst v consumed.
-    simpl. unfold encode_len_multi.
+    simpl. unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     rewrite Hle. reflexivity.
   - destruct (Nat.eqb first 253) eqn:Heq253; [| discriminate].
     apply Nat.eqb_eq in Heq253. subst first.
@@ -272,7 +292,7 @@ Proof.
     injection Hdec as Hv Hc. subst v consumed.
     (* Goal: firstn 3 (253 :: lo :: hi :: rest3) = encode_len_multi (lo + hi * 256) *)
     simpl firstn.
-    unfold encode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     (* Need: (lo + hi * 256 <=? 252) = false *)
     assert (Hnle : (lo + hi * 256 <=? 252) = false)
       by (apply Nat.leb_gt; lia).
@@ -300,11 +320,11 @@ Theorem decode_len_consumed_eq_multi : forall (bs : list nat) (v consumed : nat)
 Proof.
   intros bs v consumed Hdec.
   destruct bs as [| first rest]; [simpl in Hdec; discriminate |].
-  unfold decode_len_multi in Hdec.
+  unfold decode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max in Hdec.
   destruct (first <=? 252) eqn:Hle.
   - (* Single-byte case *)
     injection Hdec as Hv Hc. subst v consumed.
-    unfold encode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     rewrite Hle. reflexivity.
   - destruct (Nat.eqb first 253) eqn:Heq253; [| discriminate].
     apply Nat.eqb_eq in Heq253. subst first.
@@ -317,7 +337,7 @@ Proof.
     apply Nat.leb_le in Hmin.
     injection Hdec as Hv Hc. subst v consumed.
     (* Goal: 3 = length (encode_len_multi (lo + hi * 256)) *)
-    unfold encode_len_multi.
+    unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
     assert (Hnle : (lo + hi * 256 <=? 252) = false)
       by (apply Nat.leb_gt; lia).
     rewrite Hnle.
@@ -440,7 +460,7 @@ Theorem encode_len_multi_length : forall (n : nat),
   length (encode_len_multi n) = if n <=? 252 then 1 else 3.
 Proof.
   intros n Hn.
-  unfold encode_len_multi.
+  unfold encode_len_multi, compact_single_max, compact_fd_marker, byte_base, byte_max.
   destruct (n <=? 252) eqn:H1.
   - reflexivity.
   - assert (H2 : (n <=? max_u16) = true) by (apply Nat.leb_le; lia).
@@ -480,6 +500,29 @@ Proof.
   induction l1 as [| x xs IH]; intros l2; simpl.
   - reflexivity.
   - apply IH.
+Qed.
+
+Lemma firstn_length_le : forall {A : Type} (n : nat) (l : list A),
+  length (firstn n l) <= length l.
+Proof.
+  induction n as [| n IH]; intros [| x xs]; simpl; try lia.
+  specialize (IH xs). lia.
+Qed.
+
+Lemma firstn_length_exact : forall {A : Type} (n : nat) (l : list A),
+  n <= length l ->
+  length (firstn n l) = n.
+Proof.
+  intros A n.
+  induction n as [| n IH]; intros [| x xs] Hle; simpl in *; try lia.
+  rewrite IH; lia.
+Qed.
+
+Lemma skipn_length_le : forall {A : Type} (n : nat) (l : list A),
+  length (skipn n l) <= length l.
+Proof.
+  induction n as [| n IH]; intros [| x xs]; simpl; try lia.
+  specialize (IH xs). lia.
 Qed.
 
 (** Concrete witness serialization using the multi-byte varint. *)
@@ -553,6 +596,318 @@ Proof.
     + reflexivity.
 Qed.
 
+(** Successful concrete parsing exposes the exact decomposition used by the
+    parser. This is the structural bridge needed to prove canonicality without
+    relying on the abstract [SpendPredPQ.v] varint axioms. *)
+Lemma parse_witness_concrete_extracts :
+  forall (w pk sig : list nat),
+    parse_witness_concrete w = Some (pk, sig) ->
+    exists (pk_len pk_consumed sig_len sig_consumed : nat),
+      decode_len_multi w = Some (pk_len, pk_consumed) /\
+      pk_len <= length (skipn pk_consumed w) /\
+      pk = firstn pk_len (skipn pk_consumed w) /\
+      decode_len_multi (skipn pk_len (skipn pk_consumed w)) = Some (sig_len, sig_consumed) /\
+      sig_len <= length (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) /\
+      sig = firstn sig_len (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) /\
+      skipn sig_len (skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) = [] /\
+      pk <> [] /\
+      sig <> [].
+Proof.
+  intros w pk sig Hparse.
+  unfold parse_witness_concrete in Hparse.
+  destruct (decode_len_multi w) as [[pk_len pk_consumed] |] eqn:Hpkdec;
+    try discriminate.
+  exists pk_len, pk_consumed.
+  destruct (pk_len <=? length (skipn pk_consumed w)) eqn:Hpkle;
+    try discriminate.
+  apply Nat.leb_le in Hpkle.
+  remember (firstn pk_len (skipn pk_consumed w)) as parsed_pk eqn:Hparsedpk.
+  remember (skipn pk_len (skipn pk_consumed w)) as rest_after_pk eqn:Hrestpk.
+  destruct (decode_len_multi rest_after_pk) as [[sig_len sig_consumed] |] eqn:Hsigdec;
+    try discriminate.
+  exists sig_len, sig_consumed.
+  destruct (sig_len <=? length (skipn sig_consumed rest_after_pk)) eqn:Hsigle;
+    try discriminate.
+  apply Nat.leb_le in Hsigle.
+  remember (firstn sig_len (skipn sig_consumed rest_after_pk)) as parsed_sig eqn:Hparsedsig.
+  remember (skipn sig_len (skipn sig_consumed rest_after_pk)) as trailing eqn:Htrailing.
+  destruct parsed_pk as [| pk_head pk_tail]; try discriminate.
+  destruct parsed_sig as [| sig_head sig_tail]; try discriminate.
+  destruct trailing as [| trail_head trail_tail]; try discriminate.
+  injection Hparse as Hpk Hsig. subst pk sig.
+  repeat split; try congruence.
+Qed.
+
+(** Concrete canonicality: every accepted witness byte string is exactly the
+    canonical concrete serialization of its parsed public key and signature. *)
+Theorem parse_witness_concrete_determines_serialize :
+  forall (w pk sig : list nat),
+    parse_witness_concrete w = Some (pk, sig) ->
+    w = serialize_witness_concrete pk sig.
+Proof.
+  intros w pk sig Hparse.
+  destruct (parse_witness_concrete_extracts w pk sig Hparse)
+    as [pk_len [pk_consumed [sig_len [sig_consumed Hextract]]]].
+  destruct Hextract
+    as [Hpkdec [Hpkle [Hpk [Hsigdec [Hsigle [Hsig [Htrail [Hpkne Hsigne]]]]]]]].
+  unfold serialize_witness_concrete.
+  rewrite <- (firstn_skipn pk_consumed w) at 1.
+  pose proof (decode_len_canonical_multi w pk_len pk_consumed Hpkdec) as Hpkcan.
+  rewrite Hpkcan.
+  rewrite <- (firstn_skipn pk_len (skipn pk_consumed w)) at 1.
+  rewrite <- Hpk.
+  rewrite <- (firstn_skipn sig_consumed (skipn pk_len (skipn pk_consumed w))) at 1.
+  pose proof (decode_len_canonical_multi
+    (skipn pk_len (skipn pk_consumed w)) sig_len sig_consumed Hsigdec) as Hsigcan.
+  rewrite Hsigcan.
+  rewrite <- (firstn_skipn sig_len
+    (skipn sig_consumed (skipn pk_len (skipn pk_consumed w)))) at 1.
+  rewrite <- Hsig.
+  rewrite Htrail.
+  rewrite app_nil_r.
+  assert (Hpklen : length pk = pk_len).
+  { rewrite Hpk. rewrite firstn_length_exact; [reflexivity | exact Hpkle]. }
+  assert (Hsiglen : length sig = sig_len).
+  { rewrite Hsig. rewrite firstn_length_exact; [reflexivity | exact Hsigle]. }
+  rewrite Hpklen, Hsiglen.
+  reflexivity.
+Qed.
+
+(** Concrete parse injectivity on the accepting domain. *)
+Corollary parse_witness_concrete_injective :
+  forall (w1 w2 pk sig : list nat),
+    parse_witness_concrete w1 = Some (pk, sig) ->
+    parse_witness_concrete w2 = Some (pk, sig) ->
+    w1 = w2.
+Proof.
+  intros w1 w2 pk sig H1 H2.
+  rewrite (parse_witness_concrete_determines_serialize w1 pk sig H1).
+  rewrite (parse_witness_concrete_determines_serialize w2 pk sig H2).
+  reflexivity.
+Qed.
+
+(** A serialized witness that passes the consensus witness-size cap is fully
+    inside the Coq varint domain. This is the protocol-relevant closure for the
+    current bounded PO-8 model: accepted witnesses do not need the 0xFE/0xFF
+    CompactSize branches while [MAX_WITNESS_SIZE <= 65535] holds. *)
+Theorem serialized_witness_size_bound_implies_modeled_lengths :
+  forall (pk sig : list nat),
+    length (serialize_witness_concrete pk sig) <= max_witness_size ->
+    length pk <= max_u16 /\ length sig <= max_u16.
+Proof.
+  intros pk sig Hbound.
+  unfold serialize_witness_concrete in Hbound.
+  repeat rewrite app_length in Hbound.
+  pose proof max_witness_size_within_varint_model as Hmodel.
+  split; lia.
+Qed.
+
+(** The same bound holds for any successfully parsed concrete witness. *)
+Theorem parse_witness_concrete_size_bound_implies_modeled_lengths :
+  forall (w pk sig : list nat),
+    parse_witness_concrete w = Some (pk, sig) ->
+    length w <= max_witness_size ->
+    length pk <= max_u16 /\ length sig <= max_u16.
+Proof.
+  intros w pk sig Hparse Hbound.
+  unfold parse_witness_concrete in Hparse.
+  destruct (decode_len_multi w) as [[pk_len pk_consumed]|] eqn:Hpkdec;
+    try discriminate.
+  remember (skipn pk_consumed w) as rest_after_pk_len eqn:Hrestpklen.
+  destruct (pk_len <=? length rest_after_pk_len) eqn:Hpkle;
+    try discriminate.
+  remember (firstn pk_len rest_after_pk_len) as parsed_pk eqn:Hparsedpk.
+  remember (skipn pk_len rest_after_pk_len) as rest_after_pk eqn:Hrestpk.
+  destruct (decode_len_multi rest_after_pk) as [[sig_len sig_consumed]|] eqn:Hsigdec;
+    try discriminate.
+  remember (skipn sig_consumed rest_after_pk) as rest_after_sig_len eqn:Hrestsiglen.
+  destruct (sig_len <=? length rest_after_sig_len) eqn:Hsigle;
+    try discriminate.
+  remember (firstn sig_len rest_after_sig_len) as parsed_sig eqn:Hparsedsig.
+  remember (skipn sig_len rest_after_sig_len) as trailing eqn:Htrailing.
+  destruct parsed_pk as [| pk_head pk_tail]; try discriminate.
+  destruct parsed_sig as [| sig_head sig_tail]; try discriminate.
+  destruct trailing as [| trail_head trail_tail]; try discriminate.
+  injection Hparse as Hpk Hsig. subst pk sig.
+  pose proof max_witness_size_within_varint_model as Hmodel.
+  split.
+  - assert (Hpk_le_w : length (pk_head :: pk_tail) <= length w).
+    {
+      rewrite Hparsedpk.
+      eapply Nat.le_trans.
+      - apply firstn_length_le.
+      - subst rest_after_pk_len. apply skipn_length_le.
+    }
+    lia.
+  - assert (Hsig_le_w : length (sig_head :: sig_tail) <= length w).
+    {
+      rewrite Hparsedsig.
+      eapply Nat.le_trans.
+      - apply firstn_length_le.
+      - subst rest_after_sig_len.
+        eapply Nat.le_trans.
+        + apply skipn_length_le.
+        + subst rest_after_pk.
+          eapply Nat.le_trans.
+          * apply skipn_length_le.
+          * subst rest_after_pk_len. apply skipn_length_le.
+    }
+    lia.
+Qed.
+
+(** Protocol-relevant concrete PO-8 closure for accepted bounded witnesses:
+    parsing succeeds only for canonical concrete bytes, and the resulting
+    component lengths are inside the modeled varint domain when the witness
+    satisfies the consensus size cap. *)
+Theorem parse_witness_concrete_bounded_canonical :
+  forall (w pk sig : list nat),
+    parse_witness_concrete w = Some (pk, sig) ->
+    length w <= max_witness_size ->
+    w = serialize_witness_concrete pk sig /\
+    length pk <= max_u16 /\
+    length sig <= max_u16.
+Proof.
+  intros w pk sig Hparse Hbound.
+  split.
+  - exact (parse_witness_concrete_determines_serialize w pk sig Hparse).
+  - exact (parse_witness_concrete_size_bound_implies_modeled_lengths w pk sig Hparse Hbound).
+Qed.
+
+(** Boolean equality for concrete byte lists represented as [nat] values.
+    This remains byte-list agnostic: callers that need true byte semantics
+    should combine it with the existing decode byte-range checks. *)
+Fixpoint nat_list_eqb (xs ys : list nat) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x :: xs', y :: ys' => Nat.eqb x y && nat_list_eqb xs' ys'
+  | _, _ => false
+  end.
+
+Lemma nat_list_eqb_eq : forall xs ys,
+  nat_list_eqb xs ys = true <-> xs = ys.
+Proof.
+  induction xs as [| x xs IH]; destruct ys as [| y ys]; simpl.
+  - split; auto.
+  - split; discriminate.
+  - split; discriminate.
+  - rewrite andb_true_iff. rewrite Nat.eqb_eq. rewrite IH.
+    split.
+    + intros [Hxy Htail]. subst. reflexivity.
+    + intros H. injection H as Hxy Htail. auto.
+Qed.
+
+(** Byte-level canonicality predicate corresponding to Rust
+    [is_canonical_witness]. *)
+Definition is_canonical_witness_concrete_bytes (w : list nat) : bool :=
+  match parse_witness_concrete w with
+  | Some (pk, sig) => nat_list_eqb (serialize_witness_concrete pk sig) w
+  | None => false
+  end.
+
+Theorem is_canonical_witness_concrete_bytes_sound :
+  forall w,
+    is_canonical_witness_concrete_bytes w = true ->
+    exists pk sig,
+      parse_witness_concrete w = Some (pk, sig) /\
+      w = serialize_witness_concrete pk sig.
+Proof.
+  intros w Hcanon.
+  unfold is_canonical_witness_concrete_bytes in Hcanon.
+  destruct (parse_witness_concrete w) as [[pk sig] |] eqn:Hparse;
+    try discriminate.
+  apply nat_list_eqb_eq in Hcanon.
+  exists pk, sig.
+  split.
+  - reflexivity.
+  - symmetry. exact Hcanon.
+Qed.
+
+(** Consensus-domain parser corresponding to Rust [parse_consensus_witness].
+    The ordinary parser remains a byte-level CompactSize parser; this predicate
+    adds the consensus witness-size guard that makes the current u16 proof
+    domain protocol-complete for accepted witnesses. *)
+Definition parse_consensus_witness_concrete
+    (w : list nat) : option (list nat * list nat) :=
+  if Nat.leb (length w) max_witness_size
+  then parse_witness_concrete w
+  else None.
+
+Definition is_canonical_consensus_witness_concrete_bytes (w : list nat) : bool :=
+  if Nat.leb (length w) max_witness_size
+  then is_canonical_witness_concrete_bytes w
+  else false.
+
+Theorem parse_consensus_witness_concrete_sound :
+  forall w pk sig,
+    parse_consensus_witness_concrete w = Some (pk, sig) ->
+    length w <= max_witness_size /\
+    parse_witness_concrete w = Some (pk, sig).
+Proof.
+  intros w pk sig Hparse.
+  unfold parse_consensus_witness_concrete in Hparse.
+  destruct (length w <=? max_witness_size) eqn:Hle; try discriminate.
+  apply Nat.leb_le in Hle.
+  split.
+  - exact Hle.
+  - exact Hparse.
+Qed.
+
+Theorem parse_consensus_witness_concrete_complete :
+  forall w,
+    length w <= max_witness_size ->
+    parse_consensus_witness_concrete w = parse_witness_concrete w.
+Proof.
+  intros w Hbound.
+  unfold parse_consensus_witness_concrete.
+  assert (Hle : (length w <=? max_witness_size) = true)
+    by (apply Nat.leb_le; exact Hbound).
+  rewrite Hle.
+  reflexivity.
+Qed.
+
+Theorem parse_consensus_witness_concrete_oversized :
+  forall w,
+    max_witness_size < length w ->
+    parse_consensus_witness_concrete w = None.
+Proof.
+  intros w Hbound.
+  unfold parse_consensus_witness_concrete.
+  assert (Hgt : (length w <=? max_witness_size) = false)
+    by (apply Nat.leb_gt; exact Hbound).
+  rewrite Hgt.
+  reflexivity.
+Qed.
+
+Theorem parse_consensus_witness_concrete_bounded_canonical :
+  forall w pk sig,
+    parse_consensus_witness_concrete w = Some (pk, sig) ->
+    w = serialize_witness_concrete pk sig /\
+    length pk <= max_u16 /\
+    length sig <= max_u16.
+Proof.
+  intros w pk sig Hparse.
+  destruct (parse_consensus_witness_concrete_sound w pk sig Hparse)
+    as [Hbound Hbyteparse].
+  exact (parse_witness_concrete_bounded_canonical w pk sig Hbyteparse Hbound).
+Qed.
+
+Theorem is_canonical_consensus_witness_concrete_bytes_sound :
+  forall w,
+    is_canonical_consensus_witness_concrete_bytes w = true ->
+    length w <= max_witness_size /\
+    exists pk sig,
+      parse_witness_concrete w = Some (pk, sig) /\
+      w = serialize_witness_concrete pk sig.
+Proof.
+  intros w Hcanon.
+  unfold is_canonical_consensus_witness_concrete_bytes in Hcanon.
+  destruct (length w <=? max_witness_size) eqn:Hle; try discriminate.
+  apply Nat.leb_le in Hle.
+  split.
+  - exact Hle.
+  - apply is_canonical_witness_concrete_bytes_sound. exact Hcanon.
+Qed.
+
 
 (* ================================================================= *)
 (** * Summary                                                          *)
@@ -585,6 +940,28 @@ Qed.
     8.  [encode_len_multi_injective]: encoding is injective
     9.  [encode_len_multi_length]: encoding length is 1 or 3
     10. [parse_serialize_concrete_round_trip]: witness round-trip
+    11. [parse_witness_concrete_determines_serialize]: accepted concrete
+        witnesses are exactly canonical concrete serializations
+    12. [parse_witness_concrete_injective]: concrete parse injectivity on the
+        accepting domain
+    13. [max_witness_size_within_varint_model]: consensus witness cap
+        remains inside the modeled u16 varint domain
+    14. [serialized_witness_size_bound_implies_modeled_lengths]:
+        serialized capped witnesses have modeled component lengths
+    15. [parse_witness_concrete_size_bound_implies_modeled_lengths]:
+        successfully parsed capped witnesses have modeled component lengths
+    16. [parse_witness_concrete_bounded_canonical]: accepted capped witnesses
+        are canonical and remain inside the modeled u16 domain
+    17. [parse_consensus_witness_concrete_sound]: consensus parser acceptance
+        implies the consensus size cap and byte-level parser acceptance
+    18. [parse_consensus_witness_concrete_complete]: below the consensus cap,
+        the consensus parser is exactly the byte-level parser
+    19. [parse_consensus_witness_concrete_oversized]: above the consensus cap,
+        the consensus parser rejects without parsing
+    20. [parse_consensus_witness_concrete_bounded_canonical]: consensus parser
+        acceptance implies canonical bytes and modeled component lengths
+    21. [is_canonical_consensus_witness_concrete_bytes_sound]: consensus
+        canonicality implies size-bound acceptance and canonical serialization
 
     Key proof techniques:
     - [Nat.div_mod_eq] for reconstruction: n mod 256 + n/256 * 256 = n
@@ -597,6 +974,8 @@ Qed.
     Correspondence with Rust:
     - [encode_len_multi] matches [encode_varint] for values 0..65535
     - [decode_len_multi] matches [decode_varint] for 1-byte and 0xFD cases
+    - [max_witness_size] mirrors Rust [MAX_WITNESS_SIZE = 16000], below
+      [max_u16], so consensus-valid witnesses stay inside this proof domain
     - Golden test vectors verified against Rust test suite
     - Non-canonical rejection matches Rust's canonical enforcement
 *)

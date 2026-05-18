@@ -4,12 +4,14 @@
 //! validating the 16 universal correctness properties from the design document.
 
 use crate::encoding::{
-    is_canonical_witness, parse_multisig_witness, parse_witness,
-    serialize_multisig_witness, serialize_witness,
+    is_canonical_witness, parse_multisig_witness, parse_witness, serialize_multisig_witness,
+    serialize_witness,
 };
-use crate::weight::{check_block_cost, cost_tx, verify_cost_bound, weight_tx};
 use crate::params::C_MAX;
+use crate::weight::{check_block_cost, cost_tx, verify_cost_bound, weight_tx};
 use proptest::prelude::*;
+
+type MultisigParams = (u8, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>);
 
 // ---------------------------------------------------------------------------
 // Property 1: Single-signature witness round-trip
@@ -166,32 +168,32 @@ proptest! {
 /// 3. Generate n non-empty pk vectors (1..100 bytes each)
 /// 4. Generate k non-empty sig vectors (1..100 bytes each)
 /// 5. Generate k unique sorted indices in [0, n)
-fn valid_multisig_params() -> impl Strategy<Value = (u8, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>)> {
+fn valid_multisig_params() -> impl Strategy<Value = MultisigParams> {
     // Step 1: generate n in [1, 10]
-    (1u8..=10u8).prop_flat_map(|n| {
-        // Step 2: generate k in [1, n]
-        (Just(n), 1u8..=n)
-    }).prop_flat_map(|(n, k)| {
-        // Step 3: generate n non-empty pk vectors
-        let pks_strategy = prop::collection::vec(
-            prop::collection::vec(any::<u8>(), 1..100usize),
-            n as usize,
-        );
-        // Step 4: generate k non-empty sig vectors
-        let sigs_strategy = prop::collection::vec(
-            prop::collection::vec(any::<u8>(), 1..100usize),
-            k as usize,
-        );
-        // Step 5: generate k unique sorted indices in [0, n)
-        // We use a shuffled selection approach: generate a bool mask of length n
-        // with exactly k true values, then collect the indices where true.
-        let indices_strategy = prop::sample::subsequence((0..n).collect::<Vec<u8>>(), k as usize)
-            .prop_map(|mut indices| {
-                indices.sort();
-                indices
-            });
-        (Just(k), pks_strategy, sigs_strategy, indices_strategy)
-    })
+    (1u8..=10u8)
+        .prop_flat_map(|n| {
+            // Step 2: generate k in [1, n]
+            (Just(n), 1u8..=n)
+        })
+        .prop_flat_map(|(n, k)| {
+            // Step 3: generate n non-empty pk vectors
+            let pks_strategy =
+                prop::collection::vec(prop::collection::vec(any::<u8>(), 1..100usize), n as usize);
+            // Step 4: generate k non-empty sig vectors
+            let sigs_strategy =
+                prop::collection::vec(prop::collection::vec(any::<u8>(), 1..100usize), k as usize);
+            // Step 5: generate k unique sorted indices in [0, n)
+            // We use a shuffled selection approach: generate a bool mask of length n
+            // with exactly k true values, then collect the indices where true.
+            let indices_strategy =
+                prop::sample::subsequence((0..n).collect::<Vec<u8>>(), k as usize).prop_map(
+                    |mut indices| {
+                        indices.sort();
+                        indices
+                    },
+                );
+            (Just(k), pks_strategy, sigs_strategy, indices_strategy)
+        })
 }
 
 proptest! {
@@ -203,7 +205,7 @@ proptest! {
 
         // Precondition checks (should always hold given the strategy)
         prop_assert!(k >= 1 && k <= n, "k must be in [1, n]");
-        prop_assert!(n >= 1 && n <= 10, "n must be in [1, 10]");
+        prop_assert!((1..=10).contains(&n), "n must be in [1, 10]");
         prop_assert_eq!(sigs.len(), k as usize, "must have exactly k signatures");
         prop_assert_eq!(indices.len(), k as usize, "must have exactly k indices");
 
@@ -267,50 +269,55 @@ proptest! {
 /// - Reversing the indices (descending order)
 /// - Making two adjacent indices equal (duplicate)
 /// - Swapping two adjacent indices
-fn non_ascending_multisig_params()
-    -> impl Strategy<Value = (u8, Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>)>
-{
+fn non_ascending_multisig_params() -> impl Strategy<Value = MultisigParams> {
     // n in [2, 10] so we can have k >= 2
-    (2u8..=10u8).prop_flat_map(|n| {
-        // k in [2, n] — need at least 2 indices to create a non-ascending pair
-        (Just(n), 2u8..=n)
-    }).prop_flat_map(|(n, k)| {
-        let pks_strategy = prop::collection::vec(
-            prop::collection::vec(any::<u8>(), 1..100usize),
-            n as usize,
-        );
-        let sigs_strategy = prop::collection::vec(
-            prop::collection::vec(any::<u8>(), 1..100usize),
-            k as usize,
-        );
-        // Generate valid sorted indices first
-        let indices_strategy = prop::sample::subsequence((0..n).collect::<Vec<u8>>(), k as usize)
-            .prop_map(|mut indices| {
-                indices.sort();
-                indices
-            });
-        // Choose a corruption method: 0 = reverse, 1 = duplicate adjacent, 2 = swap adjacent
-        let corruption = 0u8..3u8;
-        (Just(k), pks_strategy, sigs_strategy, indices_strategy, corruption)
-    }).prop_map(|(k, pks, sigs, mut indices, corruption)| {
-        // Corrupt the indices to be non-ascending
-        match corruption {
-            0 => {
-                // Reverse: guaranteed non-ascending for k >= 2 with distinct values
-                indices.reverse();
+    (2u8..=10u8)
+        .prop_flat_map(|n| {
+            // k in [2, n] — need at least 2 indices to create a non-ascending pair
+            (Just(n), 2u8..=n)
+        })
+        .prop_flat_map(|(n, k)| {
+            let pks_strategy =
+                prop::collection::vec(prop::collection::vec(any::<u8>(), 1..100usize), n as usize);
+            let sigs_strategy =
+                prop::collection::vec(prop::collection::vec(any::<u8>(), 1..100usize), k as usize);
+            // Generate valid sorted indices first
+            let indices_strategy =
+                prop::sample::subsequence((0..n).collect::<Vec<u8>>(), k as usize).prop_map(
+                    |mut indices| {
+                        indices.sort();
+                        indices
+                    },
+                );
+            // Choose a corruption method: 0 = reverse, 1 = duplicate adjacent, 2 = swap adjacent
+            let corruption = 0u8..3u8;
+            (
+                Just(k),
+                pks_strategy,
+                sigs_strategy,
+                indices_strategy,
+                corruption,
+            )
+        })
+        .prop_map(|(k, pks, sigs, mut indices, corruption)| {
+            // Corrupt the indices to be non-ascending
+            match corruption {
+                0 => {
+                    // Reverse: guaranteed non-ascending for k >= 2 with distinct values
+                    indices.reverse();
+                }
+                1 => {
+                    // Duplicate: set indices[1] = indices[0]
+                    indices[1] = indices[0];
+                }
+                _ => {
+                    // Swap adjacent: swap indices[0] and indices[1]
+                    // Since they were sorted, after swap indices[0] > indices[1]
+                    indices.swap(0, 1);
+                }
             }
-            1 => {
-                // Duplicate: set indices[1] = indices[0]
-                indices[1] = indices[0];
-            }
-            _ => {
-                // Swap adjacent: swap indices[0] and indices[1]
-                // Since they were sorted, after swap indices[0] > indices[1]
-                indices.swap(0, 1);
-            }
-        }
-        (k, pks, sigs, indices)
-    })
+            (k, pks, sigs, indices)
+        })
 }
 
 proptest! {
@@ -363,8 +370,8 @@ proptest! {
 //
 // Tag: Feature: pq-witness-protocol, Property 4: SpendPred_PQ complete characterization
 
-use crate::spend_pred::spend_pred_pq;
 use crate::params::MAX_WITNESS_SIZE;
+use crate::spend_pred::spend_pred_pq;
 use fips204::ml_dsa_44;
 use fips204::traits::{SerDes, Signer};
 use sha2::{Digest, Sha256};
@@ -384,7 +391,7 @@ proptest! {
         let sig = sk.try_sign(&msg, &[]).unwrap();
 
         // Serialize the witness
-        let witness = serialize_witness(&pk_bytes, &sig.to_vec());
+        let witness = serialize_witness(&pk_bytes, sig.as_ref());
 
         // Compute the correct commitment: P = SHA-256(pk)
         let commitment: [u8; 32] = Sha256::digest(&pk_bytes).into();
@@ -767,10 +774,7 @@ fn pq_fraction(utxo_set: &UtxoSet) -> (usize, usize) {
     if total == 0 {
         return (0, 0);
     }
-    let pq_count = utxo_set
-        .values()
-        .filter(|o| o.script_version == 2)
-        .count();
+    let pq_count = utxo_set.values().filter(|o| o.script_version == 2).count();
     (pq_count, total)
 }
 
@@ -868,9 +872,7 @@ proptest! {
         // Cap the number of transactions to the number of available legacy outputs
         let actual_txs = num_txs.min(legacy_outpoints.len());
 
-        for tx_idx in 0..actual_txs {
-            let legacy_op = &legacy_outpoints[tx_idx];
-
+        for (tx_idx, legacy_op) in legacy_outpoints.iter().take(actual_txs).enumerate() {
             // Build a valid migration transaction: spend legacy, create PQ
             let tx = Transaction {
                 version: 2,
@@ -1021,7 +1023,7 @@ proptest! {
         let count = num_txs.min(max_count);
         let block: Vec<Transaction> = vec![tx; count];
 
-        let total: u64 = block.iter().map(|t| cost_tx(t)).sum();
+        let total: u64 = block.iter().map(cost_tx).sum();
         prop_assert!(total <= C_MAX, "precondition: total cost {} must be <= C_MAX {}", total, C_MAX);
 
         prop_assert!(
@@ -1043,7 +1045,7 @@ proptest! {
         let count = (C_MAX / tx_cost) as usize + 1;
         let block: Vec<Transaction> = vec![tx; count];
 
-        let total: u64 = block.iter().map(|t| cost_tx(t)).sum();
+        let total: u64 = block.iter().map(cost_tx).sum();
         prop_assert!(total > C_MAX, "precondition: total cost {} must exceed C_MAX {}", total, C_MAX);
 
         prop_assert!(
@@ -1073,9 +1075,15 @@ fn block_budget_exclusion_when_exceeding_remaining() {
     let count = (C_MAX / small_cost) as usize;
     let mut block: Vec<Transaction> = vec![small_tx; count];
 
-    let total_before: u64 = block.iter().map(|t| cost_tx(t)).sum();
-    assert!(total_before <= C_MAX, "block should be within budget before adding extra tx");
-    assert!(check_block_cost(&block), "block should pass check_block_cost before extra tx");
+    let total_before: u64 = block.iter().map(cost_tx).sum();
+    assert!(
+        total_before <= C_MAX,
+        "block should be within budget before adding extra tx"
+    );
+    assert!(
+        check_block_cost(&block),
+        "block should pass check_block_cost before extra tx"
+    );
 
     // Add one more transaction that exceeds the remaining budget
     let remaining = C_MAX - total_before;
@@ -1083,10 +1091,18 @@ fn block_budget_exclusion_when_exceeding_remaining() {
     let big_witness_size = (remaining + 1) as usize; // witness alone exceeds remaining
     let extra_tx = make_tx_for_weight(&[big_witness_size], 1);
     let extra_cost = cost_tx(&extra_tx);
-    assert!(extra_cost > remaining, "extra tx cost {} must exceed remaining budget {}", extra_cost, remaining);
+    assert!(
+        extra_cost > remaining,
+        "extra tx cost {} must exceed remaining budget {}",
+        extra_cost,
+        remaining
+    );
 
     block.push(extra_tx);
-    assert!(!check_block_cost(&block), "block should fail check_block_cost after adding tx that exceeds remaining budget");
+    assert!(
+        !check_block_cost(&block),
+        "block should fail check_block_cost after adding tx that exceeds remaining budget"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,9 +1201,7 @@ proptest! {
         // Each tx spends one PQ output and creates a new PQ output
         let actual_txs = num_txs.min(pq_outpoints.len());
 
-        for tx_idx in 0..actual_txs {
-            let pq_op = &pq_outpoints[tx_idx];
-
+        for (tx_idx, pq_op) in pq_outpoints.iter().take(actual_txs).enumerate() {
             // Build a valid PQ transaction (only spends PQ outputs)
             let tx = Transaction {
                 version: 2,
@@ -1249,7 +1263,6 @@ proptest! {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Property 15: Structural invariant preservation
@@ -2112,7 +2125,7 @@ proptest! {
 // The Coq model axiomatizes varint with 6 properties. We verify each
 // axiom holds for the Rust encode_varint/decode_varint.
 
-use crate::encoding::{encode_varint, decode_varint};
+use crate::encoding::{decode_varint, encode_varint};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
@@ -2288,7 +2301,7 @@ fn po8_spend_pred_iff_forward_direction() {
     let message = b"PO-8 correspondence test message";
 
     let sig = sk.try_sign(message.as_slice(), &[]).unwrap();
-    let witness = serialize_witness(&pk_bytes, &sig.to_vec());
+    let witness = serialize_witness(&pk_bytes, sig.as_ref());
     let commitment: [u8; 32] = Sha256::digest(&pk_bytes).into();
 
     // Condition 1: parse succeeds
@@ -2330,7 +2343,7 @@ fn po8_spend_pred_iff_backward_hash_mismatch() {
     let pk_bytes = pk.into_bytes().to_vec();
     let message = b"PO-8 hash mismatch test";
     let sig = sk.try_sign(message.as_slice(), &[]).unwrap();
-    let witness = serialize_witness(&pk_bytes, &sig.to_vec());
+    let witness = serialize_witness(&pk_bytes, sig.as_ref());
 
     let wrong_commitment = [0xFF; 32]; // definitely not H(pk)
     assert!(
@@ -2346,7 +2359,7 @@ fn po8_spend_pred_iff_backward_vfy_failure() {
     let pk_bytes = pk.into_bytes().to_vec();
     let message = b"PO-8 vfy failure test";
     let sig = sk.try_sign(message.as_slice(), &[]).unwrap();
-    let witness = serialize_witness(&pk_bytes, &sig.to_vec());
+    let witness = serialize_witness(&pk_bytes, sig.as_ref());
     let commitment: [u8; 32] = Sha256::digest(&pk_bytes).into();
 
     // Use a different message for verification
@@ -2369,12 +2382,12 @@ fn po8_spend_pred_iff_backward_vfy_failure() {
 fn po8_cost_equals_weight_correspondence() {
     // Test several transaction configurations
     let test_cases: Vec<(Vec<usize>, usize)> = vec![
-        (vec![3734], 1),           // ML-DSA-44 single-sig
-        (vec![7890], 1),           // SLH-DSA-128s single-sig
-        (vec![8786], 1),           // 2-of-3 multisig
-        (vec![3734, 3734], 2),     // 2-input, 2-output
-        (vec![100], 1),            // small witness
-        (vec![16000], 1),          // max witness
+        (vec![3734], 1),          // ML-DSA-44 single-sig
+        (vec![7890], 1),          // SLH-DSA-128s single-sig
+        (vec![8786], 1),          // 2-of-3 multisig
+        (vec![3734, 3734], 2),    // 2-input, 2-output
+        (vec![100], 1),           // small witness
+        (vec![16000], 1),         // max witness
         (vec![1, 1, 1, 1, 1], 5), // many small inputs
     ];
 
@@ -2407,7 +2420,7 @@ fn adversarial_commitment_second_preimage_resistance() {
     for _ in 0..20 {
         let (pk, _) = fips204::ml_dsa_44::try_keygen().unwrap();
         let pk_bytes = pk.into_bytes();
-        let commitment: [u8; 32] = Sha256::digest(&pk_bytes).into();
+        let commitment: [u8; 32] = Sha256::digest(pk_bytes).into();
         assert!(
             commitments.insert(commitment),
             "SHA-256 collision detected among ML-DSA-44 public keys (astronomically unlikely)"
@@ -2426,10 +2439,30 @@ fn adversarial_cross_input_replay_resistance() {
 
     // Create a 2-input transaction where both inputs are locked to the same key
     let mut utxo_set = UtxoSet::new();
-    let op0 = OutPoint { txid: [0x01; 32], vout: 0 };
-    let op1 = OutPoint { txid: [0x02; 32], vout: 0 };
-    utxo_set.insert(op0.clone(), Output { script_version: 2, commitment, value: 50_000 });
-    utxo_set.insert(op1.clone(), Output { script_version: 2, commitment, value: 50_000 });
+    let op0 = OutPoint {
+        txid: [0x01; 32],
+        vout: 0,
+    };
+    let op1 = OutPoint {
+        txid: [0x02; 32],
+        vout: 0,
+    };
+    utxo_set.insert(
+        op0.clone(),
+        Output {
+            script_version: 2,
+            commitment,
+            value: 50_000,
+        },
+    );
+    utxo_set.insert(
+        op1.clone(),
+        Output {
+            script_version: 2,
+            commitment,
+            value: 50_000,
+        },
+    );
 
     let spent0 = utxo_set.get(&op0).unwrap().clone();
     let spent1 = utxo_set.get(&op1).unwrap().clone();
@@ -2438,8 +2471,14 @@ fn adversarial_cross_input_replay_resistance() {
     let mut tx = Transaction {
         version: 2,
         inputs: vec![
-            crate::types::TxInput { outpoint: op0, witness: vec![] },
-            crate::types::TxInput { outpoint: op1, witness: vec![] },
+            crate::types::TxInput {
+                outpoint: op0,
+                witness: vec![],
+            },
+            crate::types::TxInput {
+                outpoint: op1,
+                witness: vec![],
+            },
         ],
         outputs: vec![crate::types::TxOutput {
             script_version: 2,
@@ -2452,7 +2491,7 @@ fn adversarial_cross_input_replay_resistance() {
     // Sign input 0
     let sighash0 = sighash_v2(&tx, 0, &spent0);
     let sig0 = sk.try_sign(&sighash0, &[]).unwrap();
-    let witness0 = serialize_witness(&pk_bytes, &sig0.to_vec());
+    let witness0 = serialize_witness(&pk_bytes, sig0.as_ref());
     tx.inputs[0].witness = witness0.clone();
 
     // Verify input 0's witness is valid for input 0
@@ -2463,7 +2502,10 @@ fn adversarial_cross_input_replay_resistance() {
 
     // Attempt to replay input 0's witness for input 1
     let sighash1 = sighash_v2(&tx, 1, &spent1);
-    assert_ne!(sighash0, sighash1, "sighashes for different inputs must differ");
+    assert_ne!(
+        sighash0, sighash1,
+        "sighashes for different inputs must differ"
+    );
 
     // The replayed witness must fail for input 1
     assert!(
@@ -2480,13 +2522,20 @@ fn adversarial_cross_transaction_replay_resistance() {
     let pk_bytes = pk.into_bytes().to_vec();
     let commitment: [u8; 32] = Sha256::digest(&pk_bytes).into();
 
-    let spent = Output { script_version: 2, commitment, value: 50_000 };
+    let spent = Output {
+        script_version: 2,
+        commitment,
+        value: 50_000,
+    };
 
     // Transaction 1
     let tx1 = Transaction {
         version: 2,
         inputs: vec![crate::types::TxInput {
-            outpoint: OutPoint { txid: [0x01; 32], vout: 0 },
+            outpoint: OutPoint {
+                txid: [0x01; 32],
+                vout: 0,
+            },
             witness: vec![],
         }],
         outputs: vec![crate::types::TxOutput {
@@ -2501,7 +2550,10 @@ fn adversarial_cross_transaction_replay_resistance() {
     let tx2 = Transaction {
         version: 2,
         inputs: vec![crate::types::TxInput {
-            outpoint: OutPoint { txid: [0x01; 32], vout: 0 },
+            outpoint: OutPoint {
+                txid: [0x01; 32],
+                vout: 0,
+            },
             witness: vec![],
         }],
         outputs: vec![crate::types::TxOutput {
@@ -2515,14 +2567,17 @@ fn adversarial_cross_transaction_replay_resistance() {
     // Sign for tx1
     let sighash1 = sighash_v2(&tx1, 0, &spent);
     let sig1 = sk.try_sign(&sighash1, &[]).unwrap();
-    let witness1 = serialize_witness(&pk_bytes, &sig1.to_vec());
+    let witness1 = serialize_witness(&pk_bytes, sig1.as_ref());
 
     // Verify witness is valid for tx1
     assert!(spend_pred_pq(&commitment, &sighash1, &witness1));
 
     // Attempt to use tx1's witness for tx2
     let sighash2 = sighash_v2(&tx2, 0, &spent);
-    assert_ne!(sighash1, sighash2, "different transactions must have different sighashes");
+    assert_ne!(
+        sighash1, sighash2,
+        "different transactions must have different sighashes"
+    );
 
     assert!(
         !spend_pred_pq(&commitment, &sighash2, &witness1),

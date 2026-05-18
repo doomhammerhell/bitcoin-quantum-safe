@@ -64,9 +64,22 @@ _minted-*/
 *.vok
 *.vos
 *.glob
+*.lia.cache
+*.nia.cache
 *.v.d
 .coqdeps.d
 _CoqProject.bak
+formal/coq/extraction/*.cmi
+formal/coq/extraction/*.cmo
+formal/coq/extraction/golden_vectors
+formal/coq/extraction/varint_refinement
+formal/coq/extraction/witness_refinement
+formal/coq/extraction/golden_vectors_extracted.ml
+formal/coq/extraction/golden_vectors_extracted.mli
+formal/coq/extraction/coq_varint_refinement.json
+formal/coq/extraction/coq_witness_refinement.json
+rust_varint_refinement.json
+rust_witness_refinement.json
 
 # === TLA+ ===
 *.toolbox/

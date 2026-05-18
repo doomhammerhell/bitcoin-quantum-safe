@@ -4,7 +4,7 @@
 # This script:
 # 1. Compiles all Coq modules in the correct order
 # 2. Generates OCaml extraction from WitnessExtraction.v
-# 3. Compiles the OCaml code
+# 3. Compiles the extracted OCaml code and vector harness
 # 4. Runs the golden vector generator
 # 5. Compares with Rust implementation
 #
@@ -37,10 +37,7 @@ echo "[4/5] Extraction module compiled"
 
 # Step 3: Extract to OCaml
 echo "[5/5] Extracting to OCaml..."
-coqtop -Q .. BitcoinPQ -batch << 'COQEOF'
-Require Import WitnessExtraction.
-Extraction "golden_vectors_extracted.ml" WitnessExtraction.
-COQEOF
+coqc -Q .. BitcoinPQ ExtractWitnessVectors.v
 
 echo "=========================================="
 echo "Coq→OCaml Extraction Complete"
@@ -48,17 +45,28 @@ echo "=========================================="
 
 # Step 4: Compile OCaml code
 echo "Compiling OCaml golden vector generator..."
-ocamlc -o golden_vectors golden_vectors.ml
+ocamlc -c golden_vectors_extracted.mli golden_vectors_extracted.ml
+ocamlc -o golden_vectors golden_vectors_extracted.cmo golden_vectors.ml
+ocamlc -o varint_refinement golden_vectors_extracted.cmo varint_refinement.ml
+ocamlc -o witness_refinement golden_vectors_extracted.cmo witness_refinement.ml
 
 echo "Running golden vector generator..."
 ./golden_vectors > coq_vectors.json
 
 echo "Golden vectors generated: coq_vectors.json"
+echo "Running Coq-extracted varint refinement summary..."
+./varint_refinement > coq_varint_refinement.json
+echo "Running Coq-extracted witness refinement summary..."
+./witness_refinement > coq_witness_refinement.json
 
 # Step 5: Return to project root and generate Rust vectors
 cd "$SCRIPT_DIR"
 echo "Generating Rust golden vectors..."
 cargo run --example generate_golden_vectors > rust_vectors.json
+echo "Generating Rust varint refinement summary..."
+cargo run --example generate_varint_refinement > rust_varint_refinement.json
+echo "Generating Rust witness refinement summary..."
+cargo run --example generate_witness_refinement > rust_witness_refinement.json
 
 # Step 6: Compare
 echo "=========================================="
@@ -83,6 +91,34 @@ except FileNotFoundError:
     print("ERROR: Rust vectors not found.")
     sys.exit(1)
 
+try:
+    with open('formal/coq/extraction/coq_varint_refinement.json', 'r') as f:
+        coq_varint = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq varint refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_varint_refinement.json', 'r') as f:
+        rust_varint = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust varint refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('formal/coq/extraction/coq_witness_refinement.json', 'r') as f:
+        coq_witness = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq witness refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_witness_refinement.json', 'r') as f:
+        rust_witness = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust witness refinement summary not found.")
+    sys.exit(1)
+
 print(f"Coq vectors: {len(coq_data)} test cases")
 print(f"Rust vectors: {len(rust_data)} test cases")
 
@@ -92,6 +128,7 @@ rust_by_name = {v['name']: v for v in rust_data}
 
 mismatches = []
 missing = []
+unexpected = []
 
 for name in coq_by_name:
     if name not in rust_by_name:
@@ -101,26 +138,55 @@ for name in coq_by_name:
     coq_vec = coq_by_name[name]
     rust_vec = rust_by_name[name]
 
+    if coq_vec['pk_len'] != rust_vec['pk_len']:
+        mismatches.append(f"{name}: pk_len mismatch - Coq:{coq_vec['pk_len']} vs Rust:{rust_vec['pk_len']}")
+
+    if coq_vec['sig_len'] != rust_vec['sig_len']:
+        mismatches.append(f"{name}: sig_len mismatch - Coq:{coq_vec['sig_len']} vs Rust:{rust_vec['sig_len']}")
+
     # Compare witness (the critical check)
     if coq_vec['witness'] != rust_vec['witness']:
         mismatches.append(f"{name}: WITNESS MISMATCH")
         mismatches.append(f"  Coq:  {coq_vec['witness'][:60]}...")
         mismatches.append(f"  Rust: {rust_vec['witness'][:60]}...")
 
+for name in rust_by_name:
+    if name not in coq_by_name:
+        unexpected.append(f"Unexpected Rust vector: {name}")
+
 if missing:
     print("\n=== MISSING VECTORS ===")
     for m in missing:
         print(m)
 
-if mismatches:
+if unexpected:
+    print("\n=== UNEXPECTED VECTORS ===")
+    for u in unexpected:
+        print(u)
+
+if mismatches or missing or unexpected:
     print("\n=== MISMATCHES FOUND ===")
     for m in mismatches:
         print(m)
     sys.exit(1)
 
+if coq_varint != rust_varint:
+    print("\n=== VARINT REFINEMENT MISMATCH ===")
+    print(f"Coq:  {coq_varint}")
+    print(f"Rust: {rust_varint}")
+    sys.exit(1)
+
+if coq_witness != rust_witness:
+    print("\n=== WITNESS REFINEMENT MISMATCH ===")
+    print(f"Coq:  {coq_witness}")
+    print(f"Rust: {rust_witness}")
+    sys.exit(1)
+
 print("\n=== SUCCESS ===")
-print("All vectors match byte-for-byte!")
-print("PO-8: Implementation correspondence VERIFIED")
+print("All bounded vectors match byte-for-byte!")
+print("Exhaustive u16 varint refinement summaries match!")
+print("Witness parser/serializer/consensus-domain/trace refinement summaries match!")
+print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 PYEOF
 
 echo ""
@@ -131,13 +197,19 @@ echo ""
 echo "Artifacts generated:"
 echo "  - formal/coq/extraction/coq_vectors.json"
 echo "  - rust_vectors.json"
+echo "  - formal/coq/extraction/coq_varint_refinement.json"
+echo "  - rust_varint_refinement.json"
+echo "  - formal/coq/extraction/coq_witness_refinement.json"
+echo "  - rust_witness_refinement.json"
 echo ""
 echo "Proof Obligations Status:"
 echo "  PO-1 (Totality):          VERIFIED"
 echo "  PO-2 (Determinism):       VERIFIED"
 echo "  PO-3 (Parse Canonicality): VERIFIED"
-echo "  PO-4 (Sighash Commitment): VERIFIED (SighashV2.v)"
+echo "  PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.v + Rust PBT)"
 echo "  PO-5 (Transition Det.):    VERIFIED"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
-echo "  PO-8 (Correspondence):     VERIFIED (Coq↔Rust byte match)"
+echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"
+echo "  PO-8 (Rust source):        RUN ./verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"
+echo "  PO-8 (Compiled artifact):  RUN ./verify_compiled_refinement.sh FOR RELEASE-BINARY TRANSLATION VALIDATION"
 echo ""

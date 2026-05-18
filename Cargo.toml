@@ -15,9 +15,18 @@ serde_json = "1.0"
 proptest = "1.4"
 criterion = "0.5"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [[bench]]
 name = "ml_dsa_bench"
 harness = false
 
 [[example]]
 name = "generate_golden_vectors"
+
+[[example]]
+name = "generate_varint_refinement"
+
+[[example]]
+name = "generate_witness_refinement"
