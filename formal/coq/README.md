@@ -3,11 +3,12 @@
 Machine-checked and executable-evidence artifacts for the PQ witness protocol.
 The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-7, and
 the bounded varint/canonical witness discharge used for PO-8 evidence. PO-4 is
-proved for the Coq sighash model under the SHA-256 collision-resistance axiom.
-Rust property-based tests, Kani source-level bounded harnesses, and release
-binary translation validation provide executable implementation evidence for the
-concrete code; a proof of compiler correctness remains outside the current proof
-boundary.
+proved for the Coq sighash model under the SHA-256 collision-resistance axiom
+and now includes a Coq-extracted transcript constructor compared against the
+Rust preimage serialization path. Rust property-based tests, Kani source-level
+bounded harnesses, and release-binary translation validation provide executable
+implementation evidence for the concrete code; proofs of SHA-256 implementation
+correctness and compiler correctness remain outside the current proof boundary.
 
 The repository-level proof-status ledger is
 [`../../PROOF_OBLIGATIONS.md`](../../PROOF_OBLIGATIONS.md).
@@ -28,7 +29,7 @@ The repository-level proof-status ledger is
 | `spend_pred_pq_hash_mismatch` | — | Hash mismatch implies rejection |
 | `spend_pred_pq_vfy_fail` | — | Verification failure implies rejection |
 
-### PO-4: Sighash Commitment (SighashV2.v) — Verified Model
+### PO-4: Sighash Commitment (SighashV2.v) — Verified Model + Transcript Refinement
 
 | Theorem | Status | Property |
 |---|---|---|
@@ -40,6 +41,8 @@ The repository-level proof-status ledger is
 | `serialize_output_injective`, `serialize_spent_output_injective` | Verified | Proved for fixed-width transaction/spent outputs |
 | `concat_input_outpoints_injective`, `concat_outputs_injective` | Verified | Proved for concatenated fixed-width serializations |
 | `hash_outpoints_injective`, `hash_outputs_injective` | Verified under hash axiom | Derived from `tagged_hash_injective` and fixed-width serialization |
+| `sighash_preimage_from_hashes` | Extracted structural function | Final preimage assembly with supplied 32-byte sub-hashes, separating deterministic transcript construction from SHA-256 |
+| `sighash_preimage_from_hashes_agrees` | Verified | The extracted transcript function agrees with the modeled `sighash_preimage` when supplied with modeled sub-hashes |
 | `wf_transaction`, `wf_spent_output` | Definitions | Scope PO-4 claims to fixed-width consensus fields |
 | `sighash_v2_injective` | Verified under hash axiom | For well-formed inputs and u32 input indices, equal sighashes imply equal consensus-significant fields, input outpoints, input index, and spent output |
 | `sighash_cross_input_separation` | Verified under hash axiom | Derived from `sighash_v2_injective` |
@@ -48,10 +51,16 @@ The repository-level proof-status ledger is
 | `sighash_field_coverage_spent_*` | Verified under hash axiom | Derived from `sighash_v2_injective`; cover spent output script version, commitment, and value |
 | `sighash_v2_commitment_property` | Verified record | Assembles the PO-4 theorem shape |
 
-This file proves the Coq sighash model, not a full refinement theorem for the
-concrete Rust implementation. The concrete implementation is covered by Rust
-property-based tests for injectivity, cross-input separation, field coverage,
-and tagged-hash domain separation.
+This file proves the Coq sighash model and exposes the deterministic final
+preimage assembly for extraction. `extraction/SighashExtraction.v` and
+`extraction/sighash_refinement.ml` compare the extracted transcript summary
+against the Rust functions in `../../src/sighash.rs`, including outpoint
+serialization, output serialization, spent-output serialization, and final
+preimage assembly with supplied sub-hashes. The concrete implementation is also
+covered by Rust property-based tests for injectivity, cross-input separation,
+field coverage, and tagged-hash domain separation. The remaining PO-4 boundary
+is the SHA-256 primitive/axiom and compiler/toolchain correctness, not the
+modeled transcript layout.
 
 ### PO-5 and PO-7: UTXO Transitions and Cost Model
 
@@ -116,6 +125,11 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   `VarintConcrete.v` to `0xFE`/`0xFF` remains necessary only if the project
   claims general-purpose CompactSize verification or raises the witness cap
   above `65535`.
+- If full end-to-end PO-4 closure is required, prove or import a verified
+  SHA-256 implementation/refinement and connect it to the deployed Rust
+  `tagged_hash` implementation. The current extracted transcript refinement
+  covers deterministic serialization/preimage assembly, not the SHA-256
+  compression function, BIP341 mechanization, or compiler/toolchain correctness.
 - Connect the finite TLA+ PO-6 model to the Coq/Rust transition artifacts if the
   project requires a single cross-artifact proof ledger.
 

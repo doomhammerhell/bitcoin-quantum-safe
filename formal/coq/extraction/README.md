@@ -1,9 +1,13 @@
-# PO-8 Extraction and Golden Vectors
+# PO-4/PO-8 Extraction and Refinement Vectors
 
-This directory contains the bounded Coq/Rust witness-encoding correspondence
-evidence used by CI. It covers the extraction-boundary comparison; the
-repository-level source proof layer is the Kani harness set in `../../../src`,
-and the compiled-artifact validation layer is `../../../verify_compiled_refinement.sh`.
+This directory contains the Coq/Rust extraction-boundary correspondence evidence
+used by CI. For PO-8 it covers bounded witness encoding, varint, consensus-domain
+parser, canonicality, and parser-trace refinement. For PO-4 it covers deterministic
+Sighash v2 transcript/preimage serialization, separated from the SHA-256
+collision-resistance axiom. The repository-level source proof layer for PO-8 is
+the Kani harness set in `../../../src`, and the compiled-artifact validation
+layers are `../../../verify_compiled_refinement.sh` and
+`../../../verify_sighash_refinement.sh`.
 
 ## Source of Truth
 
@@ -34,8 +38,39 @@ and the compiled-artifact validation layer is `../../../verify_compiled_refineme
 - `coq_vectors.json` is the checked-in output from the extracted serializer
   harness. `rust_vectors.json` at the repository root is the matching Rust
   output.
+- `SighashExtraction.v` exposes the Coq Sighash v2 transcript constructors from
+  `SighashV2.v`, including outpoint serialization, output serialization,
+  spent-output serialization, and final preimage assembly with supplied 32-byte
+  sub-hashes.
+- `ExtractSighashVectors.v` is the extraction driver that generates
+  `sighash_extracted.ml`.
+- `sighash_refinement.ml` summarizes the extracted Coq sighash transcript
+  behavior over a deterministic matrix. The matching Rust executable is
+  `examples/generate_sighash_refinement.rs`.
 
 ## Formal Scope
+
+### PO-4 Sighash Transcript Scope
+
+The Sighash v2 Coq theorem remains a cryptographic model theorem under the
+SHA-256 collision-resistance axiom. Extraction does not attempt to prove
+SHA-256, the `sha2` Rust crate, BIP341 itself, or compiler correctness. Instead,
+`sighash_preimage_from_hashes` isolates deterministic preimage construction from
+the hash primitive:
+
+- Coq supplies the final transcript assembler with explicit 32-byte outpoint and
+  output sub-hashes.
+- Rust exposes `sighash_v2_preimage_with_hashes` with the same contract.
+- The refinement harness compares outpoint serialization, output serialization,
+  spent-output serialization, and final preimage assembly across edge-case
+  transactions, indices, values, and witness-byte differences.
+
+This closes the implementation correspondence boundary for the modeled
+transcript layout. What remains outside this extraction layer is SHA-256
+primitive correctness, the collision-resistance assumption itself, and the
+compiler/toolchain execution boundary.
+
+### PO-8 Witness Encoding Scope
 
 The current Coq varint model covers Bitcoin CompactSize values in:
 
@@ -93,9 +128,10 @@ verifies five bounded symbolic harnesses over that deployed Rust source. This
 closes the bounded source-level parser-refinement step.
 
 The compiled-artifact validation layer is also separate from extraction:
-`verify_compiled_refinement.sh` builds the Rust refinement examples in release
-mode, executes those binaries, compares their JSON outputs against the
+`verify_compiled_refinement.sh` builds the PO-8 Rust refinement examples in
+release mode, executes those binaries, compares their JSON outputs against the
 Coq-extracted summaries, and emits a certificate with source, lockfile, binary,
-and generated-output hashes. This gives an auditable translation-validation
-artifact for the produced binaries, while still leaving compiler correctness
-outside the current artifact boundary.
+and generated-output hashes. `verify_sighash_refinement.sh` performs the same
+release-binary validation pattern for the PO-4 sighash transcript executable.
+These give auditable translation-validation artifacts for the produced binaries,
+while still leaving compiler correctness outside the current artifact boundary.

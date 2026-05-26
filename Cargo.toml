@@ -30,3 +30,6 @@ name = "generate_varint_refinement"
 
 [[example]]
 name = "generate_witness_refinement"
+
+[[example]]
+name = "generate_sighash_refinement"

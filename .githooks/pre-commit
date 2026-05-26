@@ -31,22 +31,26 @@ make all 2>&1 || {
 cd ../..
 echo "✓ Coq proofs OK"
 
-# Check 3: Regenerate and compare PO-8 extraction artifacts
+# Check 3: Regenerate and compare PO-4/PO-8 extraction artifacts
 echo ""
-echo "[3/5] Checking PO-8 extraction artifacts..."
+echo "[3/5] Checking PO-4/PO-8 extraction artifacts..."
 opam exec -- bash ./build_extraction.sh 2>&1 || {
-    echo "❌ PO-8 extraction/vector comparison failed"
+    echo "❌ PO-4/PO-8 extraction/vector comparison failed"
     exit 1
 }
 ./verify_compiled_refinement.sh 2>&1 || {
     echo "❌ Compiled PO-8 refinement validation failed"
     exit 1
 }
+./verify_sighash_refinement.sh 2>&1 || {
+    echo "❌ Compiled PO-4 sighash refinement validation failed"
+    exit 1
+}
 if ! git diff --quiet -- formal/coq/extraction/coq_vectors.json rust_vectors.json; then
     echo "❌ Golden vectors changed after regeneration; stage the updated vectors"
     exit 1
 fi
-echo "✓ PO-8 extraction artifacts OK"
+echo "✓ PO-4/PO-8 extraction artifacts OK"
 
 # Check 4: Rust tests pass
 echo ""
@@ -74,7 +78,7 @@ echo ""
 echo "Summary:"
 echo "- Rust code: ✓"
 echo "- Coq proofs: ✓"
-echo "- PO-8 extraction artifacts: ✓"
+echo "- PO-4/PO-8 extraction artifacts: ✓"
 echo "- Rust tests: ✓"
 echo "- Workflows: ✓"
 echo ""

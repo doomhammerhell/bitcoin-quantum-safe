@@ -30,6 +30,9 @@ const PQ_EPOCH_BYTE: u8 = 0x02;
 /// spend_type concept.
 const SPEND_TYPE_KEY_PATH: u8 = 0x00;
 
+/// Fixed length of the final sighash v2 preimage before the outer tagged hash.
+pub const SIGHASH_V2_PREIMAGE_LEN: usize = 119;
+
 /// Compute a BIP 340/341-style tagged hash.
 ///
 /// `tagged_hash(tag, data) = SHA256(SHA256(tag) || SHA256(tag) || data)`
@@ -47,6 +50,89 @@ pub fn tagged_hash(tag: &str, data: &[u8]) -> [u8; 32] {
     hasher.update(tag_hash);
     hasher.update(data);
     hasher.finalize().into()
+}
+
+fn checked_input_index(tx: &Transaction, input_index: usize) -> u32 {
+    assert!(
+        input_index < tx.inputs.len(),
+        "input_index {} out of bounds for transaction with {} inputs",
+        input_index,
+        tx.inputs.len()
+    );
+    u32::try_from(input_index).expect("input_index exceeds 4-byte consensus encoding")
+}
+
+/// Serialize all transaction input outpoints committed by sighash v2.
+///
+/// Witness bytes are intentionally excluded. This is the consensus transcript
+/// fragment modeled by `serialize_outpoint` over `tx_input_outpoints` in Coq.
+pub fn serialize_sighash_outpoints(tx: &Transaction) -> Vec<u8> {
+    let mut data = Vec::with_capacity(tx.inputs.len() * 36);
+    for input in &tx.inputs {
+        data.extend_from_slice(&input.outpoint.txid);
+        data.extend_from_slice(&input.outpoint.vout.to_le_bytes());
+    }
+    data
+}
+
+/// Serialize all transaction outputs committed by sighash v2.
+pub fn serialize_sighash_outputs(tx: &Transaction) -> Vec<u8> {
+    let mut data = Vec::with_capacity(tx.outputs.len() * 41);
+    for output in &tx.outputs {
+        data.push(output.script_version);
+        data.extend_from_slice(&output.commitment);
+        data.extend_from_slice(&output.value.to_le_bytes());
+    }
+    data
+}
+
+/// Serialize the spent output context committed by sighash v2.
+pub fn serialize_sighash_spent_output(spent_output: &Output) -> Vec<u8> {
+    let mut data = Vec::with_capacity(41);
+    data.push(spent_output.script_version);
+    data.extend_from_slice(&spent_output.commitment);
+    data.extend_from_slice(&spent_output.value.to_le_bytes());
+    data
+}
+
+/// Build the final sighash v2 preimage from already-computed sub-hashes.
+///
+/// This is the direct Rust counterpart of the Coq structural function
+/// `sighash_preimage_from_hashes`. It separates deterministic transcript
+/// assembly from the cryptographic SHA-256 assumption used by the model.
+pub fn sighash_v2_preimage_with_hashes(
+    tx: &Transaction,
+    input_index: usize,
+    spent_output: &Output,
+    hash_outpoints: &[u8; 32],
+    hash_outputs: &[u8; 32],
+) -> Vec<u8> {
+    let input_index_u32 = checked_input_index(tx, input_index);
+
+    let mut preimage = Vec::with_capacity(SIGHASH_V2_PREIMAGE_LEN);
+    preimage.push(PQ_EPOCH_BYTE);
+    preimage.extend_from_slice(&tx.version.to_le_bytes());
+    preimage.extend_from_slice(hash_outpoints);
+    preimage.extend_from_slice(hash_outputs);
+    preimage.push(SPEND_TYPE_KEY_PATH);
+    preimage.extend_from_slice(&serialize_sighash_spent_output(spent_output));
+    preimage.extend_from_slice(&input_index_u32.to_le_bytes());
+    preimage.extend_from_slice(&tx.locktime.to_le_bytes());
+    debug_assert_eq!(preimage.len(), SIGHASH_V2_PREIMAGE_LEN);
+    preimage
+}
+
+/// Build the final sighash v2 preimage using the deployed tagged sub-hashes.
+pub fn sighash_v2_preimage(tx: &Transaction, input_index: usize, spent_output: &Output) -> Vec<u8> {
+    let hash_outpoints = tagged_hash("PQWitness/outpoints", &serialize_sighash_outpoints(tx));
+    let hash_outputs = tagged_hash("PQWitness/outputs", &serialize_sighash_outputs(tx));
+    sighash_v2_preimage_with_hashes(
+        tx,
+        input_index,
+        spent_output,
+        &hash_outpoints,
+        &hash_outputs,
+    )
 }
 
 /// Compute the sighash for witness version 2.
@@ -91,49 +177,7 @@ pub fn tagged_hash(tag: &str, data: &[u8]) -> [u8; 32] {
 /// Panics if `input_index >= tx.inputs.len()` or if the index cannot be
 /// represented in the 4-byte consensus encoding.
 pub fn sighash_v2(tx: &Transaction, input_index: usize, spent_output: &Output) -> [u8; 32] {
-    assert!(
-        input_index < tx.inputs.len(),
-        "input_index {} out of bounds for transaction with {} inputs",
-        input_index,
-        tx.inputs.len()
-    );
-    let input_index_u32 =
-        u32::try_from(input_index).expect("input_index exceeds 4-byte consensus encoding");
-
-    // Step 1: Tagged hash of all input outpoints.
-    let hash_outpoints = {
-        let mut data = Vec::new();
-        for input in &tx.inputs {
-            data.extend_from_slice(&input.outpoint.txid);
-            data.extend_from_slice(&input.outpoint.vout.to_le_bytes());
-        }
-        tagged_hash("PQWitness/outpoints", &data)
-    };
-
-    // Step 2: Tagged hash of all output scripts/values.
-    let hash_outputs = {
-        let mut data = Vec::new();
-        for output in &tx.outputs {
-            data.push(output.script_version);
-            data.extend_from_slice(&output.commitment);
-            data.extend_from_slice(&output.value.to_le_bytes());
-        }
-        tagged_hash("PQWitness/outputs", &data)
-    };
-
-    // Step 3: Build the final sighash preimage and compute the tagged hash.
-    let mut preimage = Vec::new();
-    preimage.push(PQ_EPOCH_BYTE);
-    preimage.extend_from_slice(&tx.version.to_le_bytes());
-    preimage.extend_from_slice(&hash_outpoints);
-    preimage.extend_from_slice(&hash_outputs);
-    preimage.push(SPEND_TYPE_KEY_PATH);
-    preimage.push(spent_output.script_version);
-    preimage.extend_from_slice(&spent_output.commitment);
-    preimage.extend_from_slice(&spent_output.value.to_le_bytes());
-    preimage.extend_from_slice(&input_index_u32.to_le_bytes());
-    preimage.extend_from_slice(&tx.locktime.to_le_bytes());
-
+    let preimage = sighash_v2_preimage(tx, input_index, spent_output);
     tagged_hash("PQWitness/sighash", &preimage)
 }
 
@@ -606,6 +650,67 @@ mod tests {
         let spent = sample_spent_output();
         let h = sighash_v2(&tx, 0, &spent);
         assert_ne!(h, [0u8; 32]);
+    }
+
+    #[test]
+    fn sighash_preimage_has_fixed_layout() {
+        let tx = sample_tx();
+        let spent = sample_spent_output();
+        let hash_outpoints = [0x11; 32];
+        let hash_outputs = [0x22; 32];
+
+        let preimage =
+            sighash_v2_preimage_with_hashes(&tx, 1, &spent, &hash_outpoints, &hash_outputs);
+
+        assert_eq!(preimage.len(), SIGHASH_V2_PREIMAGE_LEN);
+        assert_eq!(preimage[0], PQ_EPOCH_BYTE);
+        assert_eq!(&preimage[1..5], &tx.version.to_le_bytes());
+        assert_eq!(&preimage[5..37], &hash_outpoints);
+        assert_eq!(&preimage[37..69], &hash_outputs);
+        assert_eq!(preimage[69], SPEND_TYPE_KEY_PATH);
+        assert_eq!(preimage[70], spent.script_version);
+        assert_eq!(&preimage[71..103], &spent.commitment);
+        assert_eq!(&preimage[103..111], &spent.value.to_le_bytes());
+        assert_eq!(&preimage[111..115], &1u32.to_le_bytes());
+        assert_eq!(&preimage[115..119], &tx.locktime.to_le_bytes());
+    }
+
+    #[test]
+    fn sighash_preimage_uses_deployed_subhashes() {
+        let tx = sample_tx();
+        let spent = sample_spent_output();
+        let hash_outpoints = tagged_hash("PQWitness/outpoints", &serialize_sighash_outpoints(&tx));
+        let hash_outputs = tagged_hash("PQWitness/outputs", &serialize_sighash_outputs(&tx));
+
+        assert_eq!(
+            sighash_v2_preimage(&tx, 0, &spent),
+            sighash_v2_preimage_with_hashes(&tx, 0, &spent, &hash_outpoints, &hash_outputs)
+        );
+        assert_eq!(
+            sighash_v2(&tx, 0, &spent),
+            tagged_hash("PQWitness/sighash", &sighash_v2_preimage(&tx, 0, &spent))
+        );
+    }
+
+    #[test]
+    fn sighash_excludes_witness_bytes_from_transcript() {
+        let mut tx1 = sample_tx();
+        let mut tx2 = sample_tx();
+        let spent = sample_spent_output();
+
+        tx1.inputs[0].witness = vec![0x01, 0x02, 0x03];
+        tx2.inputs[0].witness = vec![0xFF; 128];
+        tx2.inputs[1].witness = vec![0xAA, 0xBB];
+
+        assert_eq!(
+            serialize_sighash_outpoints(&tx1),
+            serialize_sighash_outpoints(&tx2)
+        );
+        assert_eq!(
+            sighash_v2_preimage(&tx1, 0, &spent),
+            sighash_v2_preimage(&tx2, 0, &spent)
+        );
+        assert_eq!(sighash_v2(&tx1, 0, &spent), sighash_v2(&tx2, 0, &spent));
     }
 
     // -- verify_sighash_commitment_property tests --

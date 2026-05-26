@@ -1,4 +1,4 @@
-name: PO-8 Verification - Coq Extraction vs Rust
+name: PO-4/PO-8 Verification - Coq Extraction vs Rust
 
 on:
   push:
@@ -10,9 +10,11 @@ on:
       - "examples/generate_golden_vectors.rs"
       - "examples/generate_varint_refinement.rs"
       - "examples/generate_witness_refinement.rs"
+      - "examples/generate_sighash_refinement.rs"
       - "build_extraction.sh"
       - "verify_source_refinement.sh"
       - "verify_compiled_refinement.sh"
+      - "verify_sighash_refinement.sh"
       - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
   pull_request:
@@ -24,9 +26,12 @@ on:
       - "examples/generate_golden_vectors.rs"
       - "examples/generate_varint_refinement.rs"
       - "examples/generate_witness_refinement.rs"
+      - "examples/generate_sighash_refinement.rs"
       - "build_extraction.sh"
       - "verify_source_refinement.sh"
       - "verify_compiled_refinement.sh"
+      - "verify_sighash_refinement.sh"
+      - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
 
 env:
@@ -82,6 +87,12 @@ jobs:
           name: coq-witness-refinement
           path: formal/coq/extraction/coq_witness_refinement.json
 
+      - name: Upload Coq sighash refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coq-sighash-refinement
+          path: formal/coq/extraction/coq_sighash_refinement.json
+
   # Job 2: Generate Rust golden vectors
   generate-rust-vectors:
     runs-on: ubuntu-latest
@@ -100,6 +111,7 @@ jobs:
           cargo run --example generate_golden_vectors > rust_vectors.json
           cargo run --example generate_varint_refinement > rust_varint_refinement.json
           cargo run --example generate_witness_refinement > rust_witness_refinement.json
+          cargo run --example generate_sighash_refinement > rust_sighash_refinement.json
 
       - name: Upload Rust vectors
         uses: actions/upload-artifact@v4
@@ -118,6 +130,12 @@ jobs:
         with:
           name: rust-witness-refinement
           path: rust_witness_refinement.json
+
+      - name: Upload Rust sighash refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-sighash-refinement
+          path: rust_sighash_refinement.json
 
   # Job 3: Compare and verify
   compare-vectors:
@@ -158,6 +176,16 @@ jobs:
         with:
           name: rust-witness-refinement
 
+      - name: Download Coq sighash refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-sighash-refinement
+
+      - name: Download Rust sighash refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-sighash-refinement
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -188,6 +216,12 @@ jobs:
 
           with open('rust_witness_refinement.json', 'r') as f:
               rust_witness = json.load(f)
+
+          with open('coq_sighash_refinement.json', 'r') as f:
+              coq_sighash = json.load(f)
+
+          with open('rust_sighash_refinement.json', 'r') as f:
+              rust_sighash = json.load(f)
 
           print(f"Coq vectors: {len(coq_data)} test cases")
           print(f"Rust vectors: {len(rust_data)} test cases")
@@ -254,10 +288,18 @@ jobs:
               print(f"Rust: {rust_witness}")
               sys.exit(1)
 
+          if coq_sighash != rust_sighash:
+              print("\n=== SIGHASH TRANSCRIPT REFINEMENT MISMATCH ===")
+              print(f"Coq:  {coq_sighash}")
+              print(f"Rust: {rust_sighash}")
+              sys.exit(1)
+
           print("\n=== SUCCESS: all bounded vectors match byte-for-byte ===")
           print("=== SUCCESS: exhaustive u16 varint refinement summaries match ===")
           print("=== SUCCESS: witness parser/serializer/consensus-domain/trace refinement summaries match ===")
+          print("=== SUCCESS: sighash transcript refinement summaries match ===")
           print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
+          print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
           EOF
 
   # Job 4: Run Coq proofs
@@ -360,7 +402,42 @@ jobs:
           name: compiled-refinement-certificate
           path: target/compiled-refinement/compiled_refinement_certificate.json
 
-  # Job 7: Performance benchmarks
+  # Job 7: Validate compiled sighash transcript artifacts against Coq extraction
+  verify-sighash-refinement:
+    runs-on: ubuntu-latest
+    name: Verify Sighash Refinement
+    needs: [extract-coq]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Coq sighash refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-sighash-refinement
+          path: formal/coq/extraction
+
+      - name: Run sighash transcript refinement validation
+        run: |
+          ./verify_sighash_refinement.sh
+
+      - name: Upload sighash refinement certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: sighash-refinement-certificate
+          path: target/sighash-refinement/sighash_refinement_certificate.json
+
+  # Job 8: Performance benchmarks
   run-benchmarks:
     runs-on: ubuntu-latest
     name: ML-DSA-44 Performance Benchmarks
@@ -412,26 +489,29 @@ jobs:
   # Summary
   verification-summary:
     runs-on: ubuntu-latest
-    name: PO-8 Verification Summary
-    needs: [compare-vectors, verify-coq-proofs, verify-rust-source-refinement, verify-compiled-refinement, run-benchmarks]
+    name: PO-4/PO-8 Verification Summary
+    needs: [compare-vectors, verify-coq-proofs, verify-rust-source-refinement, verify-compiled-refinement, verify-sighash-refinement, run-benchmarks]
     if: always()
 
     steps:
       - name: Summary
         run: |
           echo "========================================"
-          echo "PO-8 VERIFICATION SUMMARY"
+          echo "PO-4/PO-8 VERIFICATION SUMMARY"
           echo "========================================"
           echo ""
           echo "✓ Coq serializer extraction to OCaml: COMPLETED"
           echo "✓ Coq bounded parser/serializer canonicality: VERIFIED"
           echo "✓ Exhaustive u16 varint refinement Coq vs Rust: COMPLETED"
           echo "✓ Witness parser/serializer/consensus-domain/trace refinement matrix + symbolic state-space Coq vs Rust: COMPLETED"
+          echo "✓ Sighash transcript refinement Coq vs Rust: COMPLETED"
           echo "✓ Rust source-level bounded parser refinement harnesses (Kani): VERIFIED"
           echo "✓ Compiled release artifact translation validation: VERIFIED"
+          echo "✓ Compiled sighash transcript artifact validation: VERIFIED"
           echo "✓ Bounded golden vector generation: COMPLETED"
           echo "✓ Coq-extracted serializer vs Rust comparison: COMPLETED"
           echo "✓ Coq proofs (PO-1, PO-2, PO-3, PO-4 model, PO-5, PO-7): VERIFIED"
           echo "✓ Performance benchmarks: COMPLETED"
           echo ""
+          echo "PO-4: Coq sighash model and Rust transcript serialization refinement are validated over the modeled matrix; SHA-256 and compiler correctness remain explicit boundaries"
           echo "PO-8: Coq concrete canonicality, extraction refinement, Rust source-level bounded parser refinement, and compiled-artifact translation validation are complete; full compiler correctness remains outside current artifact boundary"

@@ -180,10 +180,14 @@ Definition PQ_EPOCH_BYTE : nat := 2.
 (** Spend type: 0x00 for key-path spend *)
 Definition SPEND_TYPE_KEY_PATH : nat := 0.
 
-(** Final sighash preimage before the outer tagged hash. *)
-Definition sighash_preimage (tx : Transaction) (input_index : nat) (spent : SpentOutput) : list nat :=
-  let h_outpoints := hash_outpoints tx.(tx_inputs) in
-  let h_outputs := hash_outputs tx.(tx_outputs) in
+(** Final sighash preimage assembly with supplied 32-byte sub-hashes.
+    This separates deterministic transcript serialization from the SHA-256
+    assumption, and is the function extracted for Rust transcript refinement. *)
+Definition sighash_preimage_from_hashes
+  (tx : Transaction)
+  (input_index : nat)
+  (spent : SpentOutput)
+  (h_outpoints h_outputs : list nat) : list nat :=
   [PQ_EPOCH_BYTE] ++
   nat_to_le4 tx.(tx_version) ++
   h_outpoints ++
@@ -192,6 +196,22 @@ Definition sighash_preimage (tx : Transaction) (input_index : nat) (spent : Spen
   serialize_spent_output spent ++
   nat_to_le4 input_index ++
   nat_to_le4 tx.(tx_locktime).
+
+(** Final sighash preimage before the outer tagged hash. *)
+Definition sighash_preimage (tx : Transaction) (input_index : nat) (spent : SpentOutput) : list nat :=
+  let h_outpoints := hash_outpoints tx.(tx_inputs) in
+  let h_outputs := hash_outputs tx.(tx_outputs) in
+  sighash_preimage_from_hashes tx input_index spent h_outpoints h_outputs.
+
+Theorem sighash_preimage_from_hashes_agrees : forall tx input_index spent,
+  sighash_preimage tx input_index spent =
+  sighash_preimage_from_hashes
+    tx input_index spent
+    (hash_outpoints tx.(tx_inputs))
+    (hash_outputs tx.(tx_outputs)).
+Proof.
+  reflexivity.
+Qed.
 
 (** Compute sighash v2 for a specific input *)
 Definition sighash_v2 (tx : Transaction) (input_index : nat) (spent : SpentOutput) : list nat :=

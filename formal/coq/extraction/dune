@@ -15,3 +15,9 @@
  (modules witness_refinement golden_vectors_extracted)
  (flags (:standard -w -27-32-33-39))
 )
+
+(executable
+ (name sighash_refinement)
+ (modules sighash_refinement sighash_extracted)
+ (flags (:standard -w -27-32-33-39))
+)

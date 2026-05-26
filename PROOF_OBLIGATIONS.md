@@ -10,6 +10,7 @@ README files, Coq modules, Rust tests, and CI.
 |---|---|
 | Verified | Machine-checked in Coq without using an admitted theorem for the named obligation. Cryptographic primitives may still be abstract parameters when the theorem is intentionally generic over the primitive. |
 | Verified model + executable implementation evidence | Machine-checked for the Coq model under explicit cryptographic axioms, with executable tests covering the concrete implementation. This is stronger than a theorem-shape ledger but weaker than a full Coq-to-Rust refinement proof. |
+| Verified model + transcript refinement + executable implementation evidence | Machine-checked for the Coq model under explicit cryptographic axioms, with a Coq-extracted deterministic transcript constructor compared against the Rust implementation and its optimized release binary. This narrows implementation correspondence for serialization/preimage assembly while still leaving cryptographic primitive implementation correctness and compiler correctness outside the artifact boundary. |
 | Model-checked | Exhaustively checked by TLC over the finite model and configurations named below. This is not an unbounded Coq theorem. |
 | Conditional/executable evidence | The theorem shape is formalized, but the proof depends on explicit axioms, admitted statements, or executable tests of the concrete implementation. |
 | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | The bounded Coq parser/serializer model is machine-checked for canonicality/injectivity, the Coq-extracted varint encoder/decoder is exhaustively compared with Rust over `0..=65535`, witness serialization is compared byte-for-byte over explicit golden vectors, a witness-level refinement matrix plus symbolic bounded state-space compares Coq-extracted `serialize`/`parse`/consensus-domain parse/canonicality/operational-trace behavior against the Rust functions, Kani verifies bounded symbolic harnesses over the deployed Rust parser source, and release binaries are built and required to reproduce the Coq-extracted PO-8 summaries with source/binary hashes recorded in a certificate. This is stronger than source-only evidence, but it is not a proof of `rustc`, LLVM, linker, CPU, or OS correctness. |
@@ -22,11 +23,52 @@ README files, Coq modules, Rust tests, and CI.
 | PO-1 | Spend predicate totality | Consensus validation must terminate with a boolean decision. | Verified | `formal/coq/SpendPredPQ.v` | `H`, `Vfy`, `encode_len`, and `decode_len` are abstract interfaces. | Instantiate the abstract varint interface into the spend-predicate module if a single closed Coq development is required. |
 | PO-2 | Spend predicate determinism | Identical inputs must produce identical validation decisions across nodes. | Verified | `formal/coq/SpendPredPQ.v` | Same abstraction boundary as PO-1. | Same closure path as PO-1. |
 | PO-3 | Witness parse canonicality | Prevents malleable witness encodings from producing ambiguous authorization state. | Verified, strengthened | `formal/coq/SpendPredPQ.v` | Depends on the six varint interface axioms. | Keep the concrete varint discharge synchronized with any encoding change. |
-| PO-4 | Sighash commitment | The signed message must commit to all consensus-critical transaction fields and input position. | Verified model + executable implementation evidence | `formal/coq/SighashV2.v`, `src/sighash.rs`, Rust property tests | SHA-256 collision resistance is axiomatized. The Coq model machine-checks 4-byte and 8-byte little-endian reconstruction/injectivity, fixed-width serialization injectivity for outpoints/outputs/spent outputs, sub-hash injectivity, central `sighash_v2_injective`, cross-input separation, and field coverage. The theorem is scoped to well-formed transactions/spent outputs and u32 input indices with fixed-width fields, and is intentionally over consensus-significant input outpoints, not full witness-bearing `TxInput` records. Rust explicitly rejects indices that cannot be represented in the 4-byte consensus encoding before serialization. | Prove a Rust refinement/bisimulation against the Coq sighash model if implementation-level PO-4 closure is required beyond executable evidence. |
+| PO-4 | Sighash commitment | The signed message must commit to all consensus-critical transaction fields and input position. | Verified model + transcript refinement + executable implementation evidence | `formal/coq/SighashV2.v`, `formal/coq/extraction/SighashExtraction.v`, `formal/coq/extraction/ExtractSighashVectors.v`, `formal/coq/extraction/sighash_refinement.ml`, `src/sighash.rs`, `examples/generate_sighash_refinement.rs`, `verify_sighash_refinement.sh`, Rust property tests | SHA-256 collision resistance is axiomatized. The Coq model machine-checks 4-byte and 8-byte little-endian reconstruction/injectivity, fixed-width serialization injectivity for outpoints/outputs/spent outputs, sub-hash injectivity, central `sighash_v2_injective`, cross-input separation, and field coverage. The theorem is scoped to well-formed transactions/spent outputs and u32 input indices with fixed-width fields, and is intentionally over consensus-significant input outpoints, not full witness-bearing `TxInput` records. `sighash_preimage_from_hashes` separates deterministic transcript assembly from SHA-256 and is extracted to OCaml; CI compares its summary against Rust's `serialize_sighash_*` and `sighash_v2_preimage*` functions over a deterministic transcript matrix, and `verify_sighash_refinement.sh` validates the optimized Rust refinement binary against the Coq-extracted summary with a hash certificate. Rust explicitly rejects indices that cannot be represented in the 4-byte consensus encoding before serialization. | Prove a verified SHA-256 implementation/refinement and compiler/toolchain correctness if full end-to-end PO-4 closure is required. A full BIP341 mechanization remains separate from this PQ Sighash v2 model. |
 | PO-5 | Transition determinism | UTXO state transition must be deterministic under the same block/transaction input. | Verified | `formal/coq/UTXOTransitions.v` | Coq model abstracts cryptographic validation result. | Connect the Coq transition model to concrete Rust validation if full implementation correspondence is required. |
 | PO-6 | Invariant preservation | UTXO structural invariants must survive valid transitions. | Model-checked | `formal/tla/BitcoinPQ.tla`, `formal/tla/BitcoinPQMulti.tla` | TLC covers the configured finite state spaces: single-input and multi-input models. | Establish an unbounded theorem or cross-artifact refinement if the project requires proof beyond finite model checking. |
 | PO-7 | Cost boundedness | PQ validation cost must remain within the block resource model. | Verified | `formal/coq/UTXOTransitions.v`, `src/weight.rs` | Coq proves exact equality for the modeled cost/weight function. | Maintain alignment if witness accounting or block cost constants change. |
 | PO-8 | Implementation correspondence | The mechanized witness encoding model must correspond to bytes accepted/generated by implementation code. | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | `formal/coq/VarintConcrete.v`, `formal/coq/extraction/*`, `build_extraction.sh`, `verify_source_refinement.sh`, `verify_compiled_refinement.sh`, `compare_vectors.py`, `examples/generate_varint_refinement.rs`, `examples/generate_witness_refinement.rs`, `tests/po8_golden_vectors.rs`, `src/encoding.rs`, `src/kani_proofs.rs`, `src/params.rs` | Coq models CompactSize only for `0..=65535`. Rust implements `0xFE`/`0xFF`, but `MAX_WITNESS_SIZE = 16000 <= 65535`; Coq proves concrete bounded parser/serializer canonicality, parse injectivity, capped witness component bounds, and soundness of the extracted consensus-domain parser/canonicality predicates; Rust exposes and uses `parse_consensus_witness` / `is_canonical_consensus_witness`; CI exhaustively compares Coq-extracted varint encode/decode with Rust for all modeled values, CI compares Coq-extracted witness serialize/parse/consensus-domain parse/canonicality/operational-trace behavior against Rust over deterministic boundary/rejection cases plus 111,111 symbolic witnesses over the modeled-domain byte alphabet, CI runs Kani source-level bounded harnesses over the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard, and CI builds release refinement binaries whose outputs must match the Coq-extracted summaries while emitting a hash certificate. | Full compiler-correctness proof remains open. Full CompactSize mechanization is optional for consensus-valid witness components while the witness cap remains below `65535`, but required if the cap is raised or if general-purpose CompactSize is claimed as verified. |
+
+## PO-4 Boundary
+
+PO-4 is no longer only a theorem over an isolated Coq model plus Rust property
+tests. The current artifact boundary explicitly separates three layers:
+
+- `formal/coq/SighashV2.v`: proves the modeled Sighash v2 commitment property
+  under the SHA-256 collision-resistance axiom, including fixed-width
+  little-endian injectivity, outpoint/output/spent-output serialization
+  injectivity, sub-hash injectivity, central `sighash_v2_injective`,
+  cross-input separation, and field coverage.
+- `sighash_preimage_from_hashes`: isolates deterministic transcript assembly
+  from SHA-256. This is the extractable structural function used for Rust
+  transcript refinement; it assumes the 32-byte outpoint/output sub-hashes are
+  supplied and proves agreement with the modeled `sighash_preimage`.
+- `formal/coq/extraction/SighashExtraction.v`,
+  `formal/coq/extraction/ExtractSighashVectors.v`, and
+  `formal/coq/extraction/sighash_refinement.ml`: extract and summarize the Coq
+  transcript constructors for outpoints, outputs, spent outputs, and final
+  preimage assembly.
+
+The Rust-side transcript boundary is explicit:
+
+- `serialize_sighash_outpoints`, `serialize_sighash_outputs`, and
+  `serialize_sighash_spent_output` expose the consensus bytes committed before
+  sub-hashing.
+- `sighash_v2_preimage_with_hashes` is the direct Rust counterpart of
+  `sighash_preimage_from_hashes`; `sighash_v2_preimage` wires that transcript to
+  the deployed tagged sub-hashes.
+- `examples/generate_sighash_refinement.rs` generates the Rust summary over the
+  same transcript matrix as the Coq-extracted OCaml harness.
+- `verify_sighash_refinement.sh` builds the release Rust refinement executable,
+  compares its output against `coq_sighash_refinement.json`, and writes
+  `target/sighash-refinement/sighash_refinement_certificate.json` with
+  toolchain, source, lockfile, binary, and output hashes.
+
+This closes the previous source-level gap around deterministic preimage
+serialization for the modeled transcript. It does not prove SHA-256's
+implementation, SHA-256's collision resistance, BIP341 itself, `rustc`, LLVM,
+the linker, CPU execution, or OS behavior. Those remain explicit trust
+boundaries rather than implicit assumptions.
 
 ## PO-8 Boundary
 
