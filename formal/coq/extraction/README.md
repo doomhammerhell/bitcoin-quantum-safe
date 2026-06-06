@@ -1,13 +1,16 @@
-# PO-4/PO-8 Extraction and Refinement Vectors
+# PO-4/PO-5/PO-8 Extraction and Refinement Vectors
 
 This directory contains the Coq/Rust extraction-boundary correspondence evidence
 used by CI. For PO-8 it covers bounded witness encoding, varint, consensus-domain
 parser, canonicality, and parser-trace refinement. For PO-4 it covers deterministic
 Sighash v2 transcript/preimage serialization, separated from the SHA-256
-collision-resistance axiom. The repository-level source proof layer for PO-8 is
-the Kani harness set in `../../../src`, and the compiled-artifact validation
-layers are `../../../verify_compiled_refinement.sh` and
-`../../../verify_sighash_refinement.sh`.
+collision-resistance axiom. For PO-5 it covers structural UTXO transition,
+transaction validation, block validation, migration/freeze, and cost refinement
+against the deployed Rust transition functions. The repository-level source
+proof layer for PO-8 is the Kani harness set in `../../../src`, and the
+compiled-artifact validation layers are `../../../verify_compiled_refinement.sh`,
+`../../../verify_sighash_refinement.sh`, and
+`../../../verify_transition_refinement.sh`.
 
 ## Source of Truth
 
@@ -47,6 +50,15 @@ layers are `../../../verify_compiled_refinement.sh` and
 - `sighash_refinement.ml` summarizes the extracted Coq sighash transcript
   behavior over a deterministic matrix. The matching Rust executable is
   `examples/generate_sighash_refinement.rs`.
+- `TransitionExtraction.v` exposes structural UTXO transition functions from
+  `UTXOTransitions.v`: lookup/remove/add/delta, duplicate-input detection,
+  input/output value sums, migration/freeze checks, structural `valid_tx`,
+  structural `valid_block`, and cost functions.
+- `ExtractTransitionVectors.v` is the extraction driver that generates
+  `transition_extracted.ml`.
+- `transition_refinement.ml` summarizes the extracted transition behavior over
+  deterministic transaction, block, and block-cost matrices. The matching Rust
+  executable is `examples/generate_transition_refinement.rs`.
 
 ## Formal Scope
 
@@ -69,6 +81,29 @@ This closes the implementation correspondence boundary for the modeled
 transcript layout. What remains outside this extraction layer is SHA-256
 primitive correctness, the collision-resistance assumption itself, and the
 compiler/toolchain execution boundary.
+
+### PO-5 UTXO Transition Scope
+
+The PO-5 transition refinement layer is structural and extensional. Coq models
+UTXO sets as association lists indexed by `nat` outpoint IDs. Rust models UTXO
+sets as `HashMap<OutPoint, Output>`. The harness uses a deterministic projection:
+initial Coq IDs map to synthetic Rust outpoints; fresh Coq IDs map to
+`compute_txid(tx), vout` for the corresponding Rust transaction output.
+
+The summary compares only consensus-significant projected observations:
+duplicate-input decisions, missing-input behavior, value conservation,
+migration and freeze decisions, `valid_tx`, `delta_tx`, sequential
+`valid_block`, block-cost checks, and selected UTXO membership/script/value
+facts before and after transitions. It covers missing input, duplicate input,
+value inflation, legacy output creation after `H_a`, frozen legacy and taproot
+spends at `H_c`, mixed PQ/legacy inputs, fee-preserving multi-input cases,
+sequential intra-block dependency, intra-block double spend, and exact/over
+block-cost boundaries.
+
+This does not prove SHA-256 txid collision resistance, Rust `HashMap` internals,
+PQ witness cryptographic verification, or compiler/toolchain correctness.
+`verify_transition_refinement.sh` adds the release-binary validation layer and
+emits `target/transition-refinement/transition_refinement_certificate.json`.
 
 ### PO-8 Witness Encoding Scope
 
@@ -133,5 +168,7 @@ release mode, executes those binaries, compares their JSON outputs against the
 Coq-extracted summaries, and emits a certificate with source, lockfile, binary,
 and generated-output hashes. `verify_sighash_refinement.sh` performs the same
 release-binary validation pattern for the PO-4 sighash transcript executable.
-These give auditable translation-validation artifacts for the produced binaries,
-while still leaving compiler correctness outside the current artifact boundary.
+`verify_transition_refinement.sh` performs the same release-binary validation
+pattern for the PO-5 transition refinement executable. These give auditable
+translation-validation artifacts for the produced binaries, while still leaving
+compiler correctness outside the current artifact boundary.

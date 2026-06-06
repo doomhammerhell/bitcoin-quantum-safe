@@ -215,7 +215,7 @@ pub fn delta_tx(utxo_set: &mut UtxoSet, tx: &Transaction) {
 /// This is a simplified model txid — deterministic and collision-resistant
 /// for our purposes, satisfying the txid collision-resistance assumption
 /// (Definition 8 in the paper).
-fn compute_txid(tx: &Transaction) -> [u8; 32] {
+pub fn compute_txid(tx: &Transaction) -> [u8; 32] {
     let mut hasher = Sha256::new();
 
     hasher.update(tx.version.to_le_bytes());

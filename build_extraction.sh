@@ -3,7 +3,8 @@
 #
 # This script:
 # 1. Compiles all Coq modules in the correct order
-# 2. Generates OCaml extraction from WitnessExtraction.v and SighashExtraction.v
+# 2. Generates OCaml extraction from WitnessExtraction.v, SighashExtraction.v,
+#    and TransitionExtraction.v
 # 3. Compiles the extracted OCaml code and vector harness
 # 4. Runs the golden vector generator
 # 5. Compares with Rust implementation
@@ -33,6 +34,7 @@ echo "[3/5] Compiling extraction module..."
 cd extraction
 coqc -Q .. BitcoinPQ -I .. WitnessExtraction.v
 coqc -Q .. BitcoinPQ -I .. SighashExtraction.v
+coqc -Q .. BitcoinPQ -I .. TransitionExtraction.v
 
 echo "[4/5] Extraction module compiled"
 
@@ -40,6 +42,7 @@ echo "[4/5] Extraction module compiled"
 echo "[5/5] Extracting to OCaml..."
 coqc -Q .. BitcoinPQ ExtractWitnessVectors.v
 coqc -Q .. BitcoinPQ ExtractSighashVectors.v
+coqc -Q .. BitcoinPQ ExtractTransitionVectors.v
 
 echo "=========================================="
 echo "Coq→OCaml Extraction Complete"
@@ -49,10 +52,12 @@ echo "=========================================="
 echo "Compiling OCaml golden vector generator..."
 ocamlc -c golden_vectors_extracted.mli golden_vectors_extracted.ml
 ocamlc -c sighash_extracted.mli sighash_extracted.ml
+ocamlc -c transition_extracted.mli transition_extracted.ml
 ocamlc -o golden_vectors golden_vectors_extracted.cmo golden_vectors.ml
 ocamlc -o varint_refinement golden_vectors_extracted.cmo varint_refinement.ml
 ocamlc -o witness_refinement golden_vectors_extracted.cmo witness_refinement.ml
 ocamlc -o sighash_refinement sighash_extracted.cmo sighash_refinement.ml
+ocamlc -o transition_refinement transition_extracted.cmo transition_refinement.ml
 
 echo "Running golden vector generator..."
 ./golden_vectors > coq_vectors.json
@@ -64,6 +69,8 @@ echo "Running Coq-extracted witness refinement summary..."
 ./witness_refinement > coq_witness_refinement.json
 echo "Running Coq-extracted sighash transcript refinement summary..."
 ./sighash_refinement > coq_sighash_refinement.json
+echo "Running Coq-extracted transition refinement summary..."
+./transition_refinement > coq_transition_refinement.json
 
 # Step 5: Return to project root and generate Rust vectors
 cd "$SCRIPT_DIR"
@@ -75,6 +82,8 @@ echo "Generating Rust witness refinement summary..."
 cargo run --example generate_witness_refinement > rust_witness_refinement.json
 echo "Generating Rust sighash transcript refinement summary..."
 cargo run --example generate_sighash_refinement > rust_sighash_refinement.json
+echo "Generating Rust transition refinement summary..."
+cargo run --example generate_transition_refinement > rust_transition_refinement.json
 
 # Step 6: Compare
 echo "=========================================="
@@ -139,6 +148,20 @@ try:
         rust_sighash = json.load(f)
 except FileNotFoundError:
     print("ERROR: Rust sighash refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('formal/coq/extraction/coq_transition_refinement.json', 'r') as f:
+        coq_transition = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq transition refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_transition_refinement.json', 'r') as f:
+        rust_transition = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust transition refinement summary not found.")
     sys.exit(1)
 
 print(f"Coq vectors: {len(coq_data)} test cases")
@@ -210,13 +233,21 @@ if coq_sighash != rust_sighash:
     print(f"Rust: {rust_sighash}")
     sys.exit(1)
 
+if coq_transition != rust_transition:
+    print("\n=== TRANSITION REFINEMENT MISMATCH ===")
+    print(f"Coq:  {coq_transition}")
+    print(f"Rust: {rust_transition}")
+    sys.exit(1)
+
 print("\n=== SUCCESS ===")
 print("All bounded vectors match byte-for-byte!")
 print("Exhaustive u16 varint refinement summaries match!")
 print("Witness parser/serializer/consensus-domain/trace refinement summaries match!")
 print("Sighash transcript refinement summaries match!")
+print("UTXO transition refinement summaries match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
+print("PO-5: Coq UTXO transition model ↔ Rust transition implementation extraction-boundary evidence")
 PYEOF
 
 echo ""
@@ -233,6 +264,8 @@ echo "  - formal/coq/extraction/coq_witness_refinement.json"
 echo "  - rust_witness_refinement.json"
 echo "  - formal/coq/extraction/coq_sighash_refinement.json"
 echo "  - rust_sighash_refinement.json"
+echo "  - formal/coq/extraction/coq_transition_refinement.json"
+echo "  - rust_transition_refinement.json"
 echo ""
 echo "Proof Obligations Status:"
 echo "  PO-1 (Totality):          VERIFIED"
@@ -241,7 +274,8 @@ echo "  PO-3 (Parse Canonicality): VERIFIED"
 echo "  PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.v + Rust PBT)"
 echo "  PO-4 (Rust transcript):     COQ-EXTRACTED VS RUST PREIMAGE SERIALIZATION REFINEMENT"
 echo "  PO-4 (Compiled artifact):   RUN ./verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
-echo "  PO-5 (Transition Det.):    VERIFIED"
+echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST TRANSITION REFINEMENT EVIDENCE"
+echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"
 echo "  PO-8 (Rust source):        RUN ./verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"

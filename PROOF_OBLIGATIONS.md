@@ -11,6 +11,7 @@ README files, Coq modules, Rust tests, and CI.
 | Verified | Machine-checked in Coq without using an admitted theorem for the named obligation. Cryptographic primitives may still be abstract parameters when the theorem is intentionally generic over the primitive. |
 | Verified model + executable implementation evidence | Machine-checked for the Coq model under explicit cryptographic axioms, with executable tests covering the concrete implementation. This is stronger than a theorem-shape ledger but weaker than a full Coq-to-Rust refinement proof. |
 | Verified model + transcript refinement + executable implementation evidence | Machine-checked for the Coq model under explicit cryptographic axioms, with a Coq-extracted deterministic transcript constructor compared against the Rust implementation and its optimized release binary. This narrows implementation correspondence for serialization/preimage assembly while still leaving cryptographic primitive implementation correctness and compiler correctness outside the artifact boundary. |
+| Verified model + transition refinement evidence | Machine-checked for the Coq UTXO transition/cost model, with Coq-extracted structural transaction/block validators and transition functions compared against the Rust implementation and its optimized release binary over deterministic edge-case matrices. This narrows implementation correspondence for UTXO transition behavior while still leaving txid collision resistance, HashMap internals, cryptographic witness verification, and compiler correctness outside the artifact boundary. |
 | Model-checked | Exhaustively checked by TLC over the finite model and configurations named below. This is not an unbounded Coq theorem. |
 | Conditional/executable evidence | The theorem shape is formalized, but the proof depends on explicit axioms, admitted statements, or executable tests of the concrete implementation. |
 | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | The bounded Coq parser/serializer model is machine-checked for canonicality/injectivity, the Coq-extracted varint encoder/decoder is exhaustively compared with Rust over `0..=65535`, witness serialization is compared byte-for-byte over explicit golden vectors, a witness-level refinement matrix plus symbolic bounded state-space compares Coq-extracted `serialize`/`parse`/consensus-domain parse/canonicality/operational-trace behavior against the Rust functions, Kani verifies bounded symbolic harnesses over the deployed Rust parser source, and release binaries are built and required to reproduce the Coq-extracted PO-8 summaries with source/binary hashes recorded in a certificate. This is stronger than source-only evidence, but it is not a proof of `rustc`, LLVM, linker, CPU, or OS correctness. |
@@ -24,8 +25,8 @@ README files, Coq modules, Rust tests, and CI.
 | PO-2 | Spend predicate determinism | Identical inputs must produce identical validation decisions across nodes. | Verified | `formal/coq/SpendPredPQ.v` | Same abstraction boundary as PO-1. | Same closure path as PO-1. |
 | PO-3 | Witness parse canonicality | Prevents malleable witness encodings from producing ambiguous authorization state. | Verified, strengthened | `formal/coq/SpendPredPQ.v` | Depends on the six varint interface axioms. | Keep the concrete varint discharge synchronized with any encoding change. |
 | PO-4 | Sighash commitment | The signed message must commit to all consensus-critical transaction fields and input position. | Verified model + transcript refinement + executable implementation evidence | `formal/coq/SighashV2.v`, `formal/coq/extraction/SighashExtraction.v`, `formal/coq/extraction/ExtractSighashVectors.v`, `formal/coq/extraction/sighash_refinement.ml`, `src/sighash.rs`, `examples/generate_sighash_refinement.rs`, `verify_sighash_refinement.sh`, Rust property tests | SHA-256 collision resistance is axiomatized. The Coq model machine-checks 4-byte and 8-byte little-endian reconstruction/injectivity, fixed-width serialization injectivity for outpoints/outputs/spent outputs, sub-hash injectivity, central `sighash_v2_injective`, cross-input separation, and field coverage. The theorem is scoped to well-formed transactions/spent outputs and u32 input indices with fixed-width fields, and is intentionally over consensus-significant input outpoints, not full witness-bearing `TxInput` records. `sighash_preimage_from_hashes` separates deterministic transcript assembly from SHA-256 and is extracted to OCaml; CI compares its summary against Rust's `serialize_sighash_*` and `sighash_v2_preimage*` functions over a deterministic transcript matrix, and `verify_sighash_refinement.sh` validates the optimized Rust refinement binary against the Coq-extracted summary with a hash certificate. Rust explicitly rejects indices that cannot be represented in the 4-byte consensus encoding before serialization. | Prove a verified SHA-256 implementation/refinement and compiler/toolchain correctness if full end-to-end PO-4 closure is required. A full BIP341 mechanization remains separate from this PQ Sighash v2 model. |
-| PO-5 | Transition determinism | UTXO state transition must be deterministic under the same block/transaction input. | Verified | `formal/coq/UTXOTransitions.v` | Coq model abstracts cryptographic validation result. | Connect the Coq transition model to concrete Rust validation if full implementation correspondence is required. |
-| PO-6 | Invariant preservation | UTXO structural invariants must survive valid transitions. | Model-checked | `formal/tla/BitcoinPQ.tla`, `formal/tla/BitcoinPQMulti.tla` | TLC covers the configured finite state spaces: single-input and multi-input models. | Establish an unbounded theorem or cross-artifact refinement if the project requires proof beyond finite model checking. |
+| PO-5 | Transition determinism | UTXO state transition must be deterministic under the same block/transaction input. | Verified model + transition refinement evidence | `formal/coq/UTXOTransitions.v`, `formal/coq/extraction/TransitionExtraction.v`, `formal/coq/extraction/ExtractTransitionVectors.v`, `formal/coq/extraction/transition_refinement.ml`, `src/lib.rs`, `src/migration.rs`, `src/freeze.rs`, `src/weight.rs`, `examples/generate_transition_refinement.rs`, `verify_transition_refinement.sh` | Coq proves the structural transition and cost model. The extractable PO-5 layer exposes `delta_tx`, structural `valid_tx`, structural `valid_block`, migration/freeze checks, and cost checks. CI compares Coq-extracted summaries against Rust's `valid_tx`, `delta_tx`, `valid_block`, `check_migration_rules`, `check_no_frozen_inputs`, `cost_tx`, `weight_tx`, and `check_block_cost` over deterministic matrices covering missing input, duplicate input, value inflation, frozen legacy spends, legacy output creation after `H_a`, post-cutover legacy/taproot rejection, mixed inputs, fee-preserving multi-input transactions, sequential intra-block dependency, intra-block double spend, and block-cost boundaries. The comparison uses an explicit projection from Coq `nat` outpoint IDs to synthetic Rust `OutPoint`s; fresh IDs map to `compute_txid(tx), vout`. It does not prove SHA-256 txid collision resistance, Rust `HashMap` internals, PQ witness cryptographic verification, or compiler/toolchain correctness. | Prove a stronger source-level Rust transition refinement, a verified txid implementation/refinement, and compiler/toolchain correctness if full end-to-end PO-5 closure is required. |
+| PO-6 | Invariant preservation | UTXO structural invariants must survive valid transitions. | Model-checked | `formal/tla/BitcoinPQ.tla`, `formal/tla/BitcoinPQMulti.tla` | TLC covers the configured finite state spaces: single-input and multi-input models. PO-5 transition refinement strengthens the operational bridge from the Coq/Rust transition functions to the modeled transition classes, but does not turn PO-6 into an unbounded theorem. | Establish an unbounded theorem or cross-artifact refinement if the project requires proof beyond finite model checking. |
 | PO-7 | Cost boundedness | PQ validation cost must remain within the block resource model. | Verified | `formal/coq/UTXOTransitions.v`, `src/weight.rs` | Coq proves exact equality for the modeled cost/weight function. | Maintain alignment if witness accounting or block cost constants change. |
 | PO-8 | Implementation correspondence | The mechanized witness encoding model must correspond to bytes accepted/generated by implementation code. | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | `formal/coq/VarintConcrete.v`, `formal/coq/extraction/*`, `build_extraction.sh`, `verify_source_refinement.sh`, `verify_compiled_refinement.sh`, `compare_vectors.py`, `examples/generate_varint_refinement.rs`, `examples/generate_witness_refinement.rs`, `tests/po8_golden_vectors.rs`, `src/encoding.rs`, `src/kani_proofs.rs`, `src/params.rs` | Coq models CompactSize only for `0..=65535`. Rust implements `0xFE`/`0xFF`, but `MAX_WITNESS_SIZE = 16000 <= 65535`; Coq proves concrete bounded parser/serializer canonicality, parse injectivity, capped witness component bounds, and soundness of the extracted consensus-domain parser/canonicality predicates; Rust exposes and uses `parse_consensus_witness` / `is_canonical_consensus_witness`; CI exhaustively compares Coq-extracted varint encode/decode with Rust for all modeled values, CI compares Coq-extracted witness serialize/parse/consensus-domain parse/canonicality/operational-trace behavior against Rust over deterministic boundary/rejection cases plus 111,111 symbolic witnesses over the modeled-domain byte alphabet, CI runs Kani source-level bounded harnesses over the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard, and CI builds release refinement binaries whose outputs must match the Coq-extracted summaries while emitting a hash certificate. | Full compiler-correctness proof remains open. Full CompactSize mechanization is optional for consensus-valid witness components while the witness cap remains below `65535`, but required if the cap is raised or if general-purpose CompactSize is claimed as verified. |
 
@@ -69,6 +70,52 @@ serialization for the modeled transcript. It does not prove SHA-256's
 implementation, SHA-256's collision resistance, BIP341 itself, `rustc`, LLVM,
 the linker, CPU execution, or OS behavior. Those remain explicit trust
 boundaries rather than implicit assumptions.
+
+## PO-5 Boundary
+
+PO-5 is no longer only a pure Coq determinism statement over an isolated UTXO
+transition model. The current artifact boundary separates three layers:
+
+- `formal/coq/UTXOTransitions.v`: proves deterministic structural transition
+  functions and no-double-spend preservation for the association-list UTXO
+  model, and defines extractable boolean checkers for structural `valid_tx`,
+  structural `valid_block`, migration/freeze rules, and cost checks.
+- `formal/coq/extraction/TransitionExtraction.v`,
+  `formal/coq/extraction/ExtractTransitionVectors.v`, and
+  `formal/coq/extraction/transition_refinement.ml`: expose the Coq transition
+  functions to OCaml and summarize their behavior over a deterministic matrix of
+  adversarial and boundary cases.
+- `examples/generate_transition_refinement.rs`: builds the Rust counterpart of
+  the same matrix using the deployed transition functions in `src/lib.rs`,
+  `src/migration.rs`, `src/freeze.rs`, and `src/weight.rs`.
+
+The matrix covers the consensus-relevant structural failure modes that matter
+for UTXO transition safety: missing inputs, duplicate inputs, value inflation,
+legacy output creation at and after `H_a`, frozen legacy and taproot spends at
+`H_c`, mixed PQ/legacy inputs at cutover, fee-preserving multi-input
+transactions, sequential intra-block dependencies, intra-block double spends,
+and exact/over-limit block-cost boundaries.
+
+The projection boundary is explicit. Coq uses `nat` outpoint IDs and
+association-list UTXO sets. Rust uses `HashMap<OutPoint, Output>`. The harness
+maps initial Coq IDs to synthetic `OutPoint`s and maps fresh Coq output IDs to
+`compute_txid(tx), vout` for the corresponding Rust transaction. The summary
+observes only extensional state facts over this projection: whether selected
+abstract IDs are present and, if present, their script version and value.
+
+`verify_transition_refinement.sh` builds the release Rust transition refinement
+executable, compares its output against `coq_transition_refinement.json`, and
+writes `target/transition-refinement/transition_refinement_certificate.json`
+with toolchain, source, lockfile, binary, and output hashes. This closes the
+current executable transition-correspondence boundary for the modeled structural
+cases. It does not prove SHA-256 txid collision resistance, Rust `HashMap`
+internals, PQ witness cryptographic verification, compiler correctness, linker
+correctness, CPU correctness, or OS behavior.
+
+PO-6 remains finite-state model-checked rather than an unbounded Coq theorem.
+The PO-5 transition refinement evidence strengthens the operational bridge to
+the Rust transition functions, but it does not by itself upgrade TLC invariant
+preservation to an unbounded proof.
 
 ## PO-8 Boundary
 

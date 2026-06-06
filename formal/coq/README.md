@@ -5,10 +5,13 @@ The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-7, and
 the bounded varint/canonical witness discharge used for PO-8 evidence. PO-4 is
 proved for the Coq sighash model under the SHA-256 collision-resistance axiom
 and now includes a Coq-extracted transcript constructor compared against the
-Rust preimage serialization path. Rust property-based tests, Kani source-level
-bounded harnesses, and release-binary translation validation provide executable
-implementation evidence for the concrete code; proofs of SHA-256 implementation
-correctness and compiler correctness remain outside the current proof boundary.
+Rust preimage serialization path. PO-5 now includes Coq-extracted structural
+transition summaries compared against Rust transaction/block transition
+functions. Rust property-based tests, Kani source-level bounded harnesses, and
+release-binary translation validation provide executable implementation evidence
+for the concrete code; proofs of SHA-256 implementation correctness, txid
+implementation correctness, and compiler correctness remain outside the current
+proof boundary.
 
 The repository-level proof-status ledger is
 [`../../PROOF_OBLIGATIONS.md`](../../PROOF_OBLIGATIONS.md).
@@ -68,9 +71,22 @@ modeled transcript layout.
 |---|---|---|
 | `delta_tx_deterministic_ext` | PO-5 | Transition determinism |
 | `delta_tx_preserves_no_double_spend` | PO-5 | No-double-spend preservation |
+| `valid_tx_structural` | PO-5 evidence | Extractable structural transaction validator mirroring duplicate-input, missing-input, value-conservation, migration, and freeze checks |
+| `valid_block_structural` | PO-5 evidence | Extractable structural block validator with sequential transition and block-cost checks |
 | `cost_bounded_by_weight` | PO-7 | Cost bounded by transaction weight |
 | `cost_equals_weight` | PO-7 | Exact equality for the modeled weight function |
 | `block_cost_bounded_by_weights` | PO-7 | Block-level cost bound |
+
+`extraction/TransitionExtraction.v`, `extraction/ExtractTransitionVectors.v`, and
+`extraction/transition_refinement.ml` expose and summarize these structural
+transition functions. The Rust counterpart
+`../../examples/generate_transition_refinement.rs` calls `valid_tx`, `delta_tx`,
+`valid_block`, `check_migration_rules`, `check_no_frozen_inputs`, `cost_tx`,
+`weight_tx`, and `check_block_cost` over the same projected matrix. The matrix
+covers missing inputs, duplicate inputs, value inflation, frozen legacy/taproot
+spends at cutover, legacy output creation after activation, mixed inputs,
+fee-preserving multi-input transactions, sequential intra-block dependencies,
+intra-block double spends, and exact/over-limit block-cost boundaries.
 
 ### PO-8: Implementation Correspondence — Bounded Extraction + Source/Compiled Evidence
 
@@ -130,6 +146,14 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   `tagged_hash` implementation. The current extracted transcript refinement
   covers deterministic serialization/preimage assembly, not the SHA-256
   compression function, BIP341 mechanization, or compiler/toolchain correctness.
+- If full end-to-end PO-5 closure is required, strengthen the current
+  extraction-boundary evidence into a source-level Rust transition proof or a
+  verified translation path, and prove/refine the deployed txid construction.
+  The current transition refinement covers structural transaction/block
+  semantics over deterministic edge-case matrices and validates the release
+  binary output against the Coq-extracted summary; it does not prove SHA-256
+  txid collision resistance, `HashMap` internals, PQ witness cryptographic
+  verification, or compiler/toolchain correctness.
 - Connect the finite TLA+ PO-6 model to the Coq/Rust transition artifacts if the
   project requires a single cross-artifact proof ledger.
 

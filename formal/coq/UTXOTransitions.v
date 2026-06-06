@@ -105,7 +105,109 @@ Definition delta_tx (U : UtxoSet) (tx : Transaction) (fresh_id : nat) : UtxoSet 
   add_outputs U' (outputs tx) fresh_id.
 
 (* ================================================================= *)
-(** * Part II: PO-5 — Transition Determinism                          *)
+(** * Part II: Executable Structural Validation Model                  *)
+(* ================================================================= *)
+
+(** The Rust [valid_tx] implementation contains cryptographic witness
+    validation for PQ spends. The structural model below intentionally stops
+    at the deterministic consensus state-machine boundary: duplicate-input
+    rejection, input existence, value conservation, migration rules, and freeze
+    rules. This is the extraction boundary used by the transition refinement
+    harness; cryptographic spend-predicate correspondence is handled by the
+    PO-8 and PO-4 artifacts. *)
+
+Record MigrationConfig : Type := mkMigrationConfig {
+  announcement_height : nat;
+  cutover_height : nat;
+}.
+
+Definition is_pq_script_version (version : nat) : bool :=
+  Nat.eqb version 2.
+
+Fixpoint contains_nat (x : nat) (xs : list nat) : bool :=
+  match xs with
+  | [] => false
+  | y :: ys => Nat.eqb x y || contains_nat x ys
+  end.
+
+Fixpoint has_duplicate_nat (xs : list nat) : bool :=
+  match xs with
+  | [] => false
+  | x :: rest => contains_nat x rest || has_duplicate_nat rest
+  end.
+
+Definition input_outpoints (tx : Transaction) : list nat :=
+  map outpoint (inputs tx).
+
+Definition has_duplicate_inputs (tx : Transaction) : bool :=
+  has_duplicate_nat (input_outpoints tx).
+
+Fixpoint sum_input_values (U : UtxoSet) (ins : list TxInput) : option nat :=
+  match ins with
+  | [] => Some 0
+  | inp :: rest =>
+      match lookup U (outpoint inp), sum_input_values U rest with
+      | Some spent, Some rest_sum => Some (value spent + rest_sum)
+      | _, _ => None
+      end
+  end.
+
+Fixpoint sum_output_values (outs : list TxOutput) : nat :=
+  match outs with
+  | [] => 0
+  | out :: rest => tx_value out + sum_output_values rest
+  end.
+
+Fixpoint all_outputs_pq (outs : list TxOutput) : bool :=
+  match outs with
+  | [] => true
+  | out :: rest => is_pq_script_version (tx_script_version out) && all_outputs_pq rest
+  end.
+
+(** Migration/freeze helpers mirror the Rust helpers' missing-input behavior:
+    missing inputs are ignored here because [valid_tx_structural] rejects them
+    earlier through [sum_input_values]. *)
+Fixpoint all_present_inputs_pq_or_missing (U : UtxoSet) (ins : list TxInput) : bool :=
+  match ins with
+  | [] => true
+  | inp :: rest =>
+      match lookup U (outpoint inp) with
+      | Some spent => is_pq_script_version (script_version spent) && all_present_inputs_pq_or_missing U rest
+      | None => all_present_inputs_pq_or_missing U rest
+      end
+  end.
+
+Definition check_migration_rules_structural
+    (height : nat) (tx : Transaction) (U : UtxoSet) (config : MigrationConfig) : bool :=
+  ((height <? announcement_height config) || all_outputs_pq (outputs tx)) &&
+  ((height <? cutover_height config) || all_present_inputs_pq_or_missing U (inputs tx)).
+
+Definition check_no_frozen_inputs_structural
+    (height : nat) (tx : Transaction) (U : UtxoSet) (config : MigrationConfig) : bool :=
+  (height <? cutover_height config) || all_present_inputs_pq_or_missing U (inputs tx).
+
+Definition valid_tx_structural
+    (U : UtxoSet) (tx : Transaction) (height : nat) (config : MigrationConfig) : bool :=
+  if has_duplicate_inputs tx then false
+  else
+    match sum_input_values U (inputs tx) with
+    | None => false
+    | Some input_sum =>
+        (sum_output_values (outputs tx) <=? input_sum) &&
+        check_migration_rules_structural height tx U config &&
+        check_no_frozen_inputs_structural height tx U config
+    end.
+
+Theorem valid_tx_structural_deterministic :
+  forall U tx height config,
+    valid_tx_structural U tx height config =
+    valid_tx_structural U tx height config.
+Proof.
+  reflexivity.
+Qed.
+
+(* ================================================================= *)
+(** * Part III: PO-5 — Transition Determinism                         *)
 (* ================================================================= *)
 
 (** ** PO-5a: Reflexive determinism *)
@@ -368,6 +470,58 @@ Definition block_cost (txs : list (list nat * nat)) : nat :=
 (** The block cost invariant: total cost ≤ C_MAX. *)
 Definition check_block_cost (txs : list (list nat * nat)) : Prop :=
   block_cost txs <= C_MAX.
+
+(** Boolean block-cost checker for extraction. *)
+Definition check_block_cost_bool (txs : list (list nat * nat)) : bool :=
+  block_cost txs <=? C_MAX.
+
+(** Structural transaction cost for the transition refinement model.
+    [TxInput] intentionally omits witness bytes; this assigns zero witness
+    length to each input. Separate PO-8 artifacts cover witness bytes. *)
+Definition cost_tx_structural (tx : Transaction) : nat :=
+  cost_tx (repeat 0 (length (inputs tx))) (length (outputs tx)).
+
+Definition block_cost_structural (txs : list Transaction) : nat :=
+  fold_right (fun tx acc => cost_tx_structural tx + acc) 0 txs.
+
+Definition check_block_cost_structural (txs : list Transaction) : bool :=
+  block_cost_structural txs <=? C_MAX.
+
+Fixpoint valid_block_transitions_structural
+    (U : UtxoSet)
+    (txs : list Transaction)
+    (height : nat)
+    (config : MigrationConfig)
+    (fresh_id : nat) : bool :=
+  match txs with
+  | [] => true
+  | tx :: rest =>
+      if valid_tx_structural U tx height config then
+        valid_block_transitions_structural
+          (delta_tx U tx fresh_id)
+          rest
+          height
+          config
+          (fresh_id + length (outputs tx))
+      else false
+  end.
+
+Definition valid_block_structural
+    (U : UtxoSet)
+    (txs : list Transaction)
+    (height : nat)
+    (config : MigrationConfig)
+    (fresh_id : nat) : bool :=
+  valid_block_transitions_structural U txs height config fresh_id &&
+  check_block_cost_structural txs.
+
+Theorem valid_block_structural_deterministic :
+  forall U txs height config fresh_id,
+    valid_block_structural U txs height config fresh_id =
+    valid_block_structural U txs height config fresh_id.
+Proof.
+  reflexivity.
+Qed.
 
 (** If the block cost invariant holds, then each transaction's cost
     is bounded by its weight (transitivity with PO-7). *)
