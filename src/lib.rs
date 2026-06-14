@@ -76,12 +76,16 @@ mod kani_proofs;
 // Transaction validation and UTXO transitions (Task 11.1)
 // ---------------------------------------------------------------------------
 
+#[cfg(not(kani))]
 use std::collections::HashSet;
 
+#[cfg(not(kani))]
 use sha2::{Digest, Sha256};
 
 use crate::freeze::check_no_frozen_inputs;
 use crate::types::{OutPoint, Output};
+
+const TXID_PREIMAGE_DOMAIN: &[u8] = b"BitcoinPQ:txid:v1";
 
 /// Validate a transaction against the UTXO set and consensus rules.
 ///
@@ -111,11 +115,22 @@ pub fn valid_tx(
     config: &MigrationConfig,
 ) -> bool {
     // Step 1: No duplicate inputs
+    #[cfg(not(kani))]
     {
         let mut seen = HashSet::with_capacity(tx.inputs.len());
         for input in &tx.inputs {
             if !seen.insert(&input.outpoint) {
                 return false;
+            }
+        }
+    }
+    #[cfg(kani)]
+    {
+        for i in 0..tx.inputs.len() {
+            for j in (i + 1)..tx.inputs.len() {
+                if tx.inputs[i].outpoint == tx.inputs[j].outpoint {
+                    return false;
+                }
             }
         }
     }
@@ -184,14 +199,22 @@ pub fn valid_tx(
 /// # Requirements: 9.1, 9.2, 9.3
 pub fn delta_tx(utxo_set: &mut UtxoSet, tx: &Transaction) {
     // Step 1: Remove spent outpoints
-    for input in &tx.inputs {
-        utxo_set.remove(&input.outpoint);
-    }
+    delta_tx_remove_spent_outputs(utxo_set, tx);
 
     // Step 2: Compute a deterministic txid
     let txid = compute_txid(tx);
 
     // Step 3: Add new outpoints
+    delta_tx_insert_created_outputs(utxo_set, tx, txid);
+}
+
+fn delta_tx_remove_spent_outputs(utxo_set: &mut UtxoSet, tx: &Transaction) {
+    for input in &tx.inputs {
+        utxo_set.remove(&input.outpoint);
+    }
+}
+
+fn delta_tx_insert_created_outputs(utxo_set: &mut UtxoSet, tx: &Transaction, txid: [u8; 32]) {
     for (vout, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint {
             txid,
@@ -206,34 +229,104 @@ pub fn delta_tx(utxo_set: &mut UtxoSet, tx: &Transaction) {
     }
 }
 
+/// Serialize the consensus-significant transaction fields committed by
+/// `compute_txid`.
+///
+/// This is the protocol model's txid transcript, not Bitcoin's legacy txid
+/// serialization. The domain tag and explicit input/output counts make the
+/// transcript structurally self-delimiting before it is passed to SHA-256.
+pub fn txid_preimage(tx: &Transaction) -> Vec<u8> {
+    let capacity = TXID_PREIMAGE_DOMAIN.len()
+        + 4
+        + 8
+        + tx.inputs.len() * (32 + 4)
+        + 8
+        + tx.outputs.len() * (1 + 32 + 8)
+        + 4;
+    let mut preimage = Vec::with_capacity(capacity);
+
+    preimage.extend_from_slice(TXID_PREIMAGE_DOMAIN);
+    preimage.extend_from_slice(&tx.version.to_le_bytes());
+    preimage.extend_from_slice(&(tx.inputs.len() as u64).to_le_bytes());
+
+    for input in &tx.inputs {
+        preimage.extend_from_slice(&input.outpoint.txid);
+        preimage.extend_from_slice(&input.outpoint.vout.to_le_bytes());
+    }
+
+    preimage.extend_from_slice(&(tx.outputs.len() as u64).to_le_bytes());
+
+    for output in &tx.outputs {
+        preimage.push(output.script_version);
+        preimage.extend_from_slice(&output.commitment);
+        preimage.extend_from_slice(&output.value.to_le_bytes());
+    }
+
+    preimage.extend_from_slice(&tx.locktime.to_le_bytes());
+    preimage
+}
+
 /// Compute a deterministic transaction ID using SHA-256.
 ///
-/// Hashes: `version (4 LE) || for each input: txid (32) || vout (4 LE) ||
-/// for each output: script_version (1) || commitment (32) || value (8 LE) ||
-/// locktime (4 LE)`.
+/// Hashes `txid_preimage(tx)`, i.e. a domain-separated transcript containing
+/// version, input count, fixed-width input outpoints, output count, fixed-width
+/// outputs, and locktime.
 ///
 /// This is a simplified model txid — deterministic and collision-resistant
 /// for our purposes, satisfying the txid collision-resistance assumption
 /// (Definition 8 in the paper).
+#[cfg(not(kani))]
 pub fn compute_txid(tx: &Transaction) -> [u8; 32] {
     let mut hasher = Sha256::new();
-
-    hasher.update(tx.version.to_le_bytes());
-
-    for input in &tx.inputs {
-        hasher.update(input.outpoint.txid);
-        hasher.update(input.outpoint.vout.to_le_bytes());
-    }
-
-    for output in &tx.outputs {
-        hasher.update([output.script_version]);
-        hasher.update(output.commitment);
-        hasher.update(output.value.to_le_bytes());
-    }
-
-    hasher.update(tx.locktime.to_le_bytes());
-
+    hasher.update(txid_preimage(tx));
     hasher.finalize().into()
+}
+
+/// Compute a deterministic transaction ID for Kani transition harnesses.
+///
+/// This is a bounded structural txid model, not SHA-256. It keeps `delta_tx`
+/// and `valid_block` source-level verification focused on transition behavior
+/// without pulling the cryptographic hash implementation into Kani. The runtime
+/// implementation above remains SHA-256 based.
+#[cfg(kani)]
+pub fn compute_txid(tx: &Transaction) -> [u8; 32] {
+    let mut txid = [0u8; 32];
+
+    let version = tx.version.to_le_bytes();
+    txid[0] = version[0];
+    txid[1] = version[1];
+    txid[2] = tx.inputs.len() as u8;
+    txid[3] = tx.outputs.len() as u8;
+
+    if let Some(input) = tx.inputs.first() {
+        txid[4] = input.outpoint.txid[0];
+        txid[5] = input.outpoint.txid[31];
+        txid[6] = input.outpoint.vout as u8;
+    }
+    if let Some(input) = tx.inputs.get(1) {
+        txid[8] = input.outpoint.txid[0];
+        txid[9] = input.outpoint.txid[31];
+        txid[10] = input.outpoint.vout as u8;
+    }
+
+    if let Some(output) = tx.outputs.first() {
+        txid[20] = output.script_version;
+        txid[21] = output.commitment[0];
+        txid[22] = output.commitment[31];
+        txid[23] = output.value as u8;
+    }
+    if let Some(output) = tx.outputs.get(1) {
+        txid[24] = output.script_version;
+        txid[25] = output.commitment[0];
+        txid[26] = output.commitment[31];
+        txid[27] = output.value as u8;
+    }
+
+    let locktime = tx.locktime.to_le_bytes();
+    txid[30] = locktime[0];
+    txid[31] ^= locktime[1];
+
+    txid
 }
 
 /// Validate a block against the UTXO set and consensus rules.
@@ -575,6 +668,52 @@ mod validation_tests {
         let id1 = compute_txid(&tx);
         let id2 = compute_txid(&tx);
         assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn txid_preimage_is_domain_separated_and_self_delimiting() {
+        let tx = Transaction {
+            version: 2,
+            inputs: vec![tx_input(outpoint(1)), tx_input(outpoint(2))],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 144,
+        };
+
+        let preimage = txid_preimage(&tx);
+
+        assert!(preimage.starts_with(TXID_PREIMAGE_DOMAIN));
+        let version_start = TXID_PREIMAGE_DOMAIN.len();
+        assert_eq!(
+            &preimage[version_start..version_start + 4],
+            &2u32.to_le_bytes()
+        );
+        let input_count_start = version_start + 4;
+        assert_eq!(
+            &preimage[input_count_start..input_count_start + 8],
+            &2u64.to_le_bytes()
+        );
+        let output_count_start = input_count_start + 8 + (2 * (32 + 4));
+        assert_eq!(
+            &preimage[output_count_start..output_count_start + 8],
+            &1u64.to_le_bytes()
+        );
+        assert_eq!(&preimage[preimage.len() - 4..], &144u32.to_le_bytes());
+    }
+
+    #[test]
+    fn compute_txid_hashes_the_txid_preimage() {
+        let tx = Transaction {
+            version: 2,
+            inputs: vec![tx_input(outpoint(1))],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 0,
+        };
+
+        let mut hasher = Sha256::new();
+        hasher.update(txid_preimage(&tx));
+        let expected: [u8; 32] = hasher.finalize().into();
+
+        assert_eq!(compute_txid(&tx), expected);
     }
 
     #[test]

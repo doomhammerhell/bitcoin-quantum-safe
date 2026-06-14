@@ -7,10 +7,15 @@ Sighash v2 transcript/preimage serialization, separated from the SHA-256
 collision-resistance axiom. For PO-5 it covers structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
 against the deployed Rust transition functions. The repository-level source
-proof layer for PO-8 is the Kani harness set in `../../../src`, and the
-compiled-artifact validation layers are `../../../verify_compiled_refinement.sh`,
+proof layer is the Kani harness set in `../../../src`: PO-8 parser/layout
+alignment plus bounded PO-5 `valid_tx`, `delta_tx`, and `valid_block`
+transition harnesses. A separate runtime-refinement layer validates txid
+preimage/hash wiring and runtime UTXO-map behavior against deterministic
+references. The compiled-artifact
+validation layers are `../../../verify_compiled_refinement.sh`,
 `../../../verify_sighash_refinement.sh`, and
-`../../../verify_transition_refinement.sh`.
+`../../../verify_transition_refinement.sh`; runtime txid/map validation is
+`../../../verify_runtime_refinement.sh`.
 
 ## Source of Truth
 
@@ -104,6 +109,22 @@ This does not prove SHA-256 txid collision resistance, Rust `HashMap` internals,
 PQ witness cryptographic verification, or compiler/toolchain correctness.
 `verify_transition_refinement.sh` adds the release-binary validation layer and
 emits `target/transition-refinement/transition_refinement_certificate.json`.
+The source-level layer adds fifteen Kani bounded PO-5 harnesses for the
+deployed Rust implementation: six `valid_tx` structural guard cases, five
+`delta_tx` removal/preservation/insertion/empty/full-spend-create cases, and
+four `valid_block` empty/sequential/rejection cases. Under `cfg(kani)`, the UTXO representation is
+a deterministic fixed-capacity finite map and `compute_txid` is a bounded
+structural model, so the verifier is not forced through OS-randomized hash
+seeding or SHA-256 internals. Those harnesses complement the extracted matrix,
+but are not an unbounded source-level transition proof and do not prove txid
+collision resistance, runtime `HashMap` internals, PQ witness cryptographic
+verification, or compiler output.
+`verify_runtime_refinement.sh` adds a runtime release-binary validation layer for
+`txid_preimage`, `compute_txid`, canonical UTXO snapshots, and runtime
+`HashMap` insert/get/remove/`delta_tx` behavior against independent deterministic
+references. This narrows the txid/map implementation boundary, but it is not a
+proof of SHA-256 primitive correctness, hash-table internals, or compiler
+output.
 
 ### PO-8 Witness Encoding Scope
 
@@ -156,11 +177,14 @@ Rust guard that rejects syntactically valid but oversized witnesses outside the
 current Coq witness domain. The symbolic bounded state-space currently adds
 111,111 parser/canonicality cases.
 
-The source-level Rust layer is intentionally separate from extraction: `src/encoding.rs`
-now exposes an internal allocation-free witness layout parser used by the public
-parser, consensus parser, and canonicality predicates, and `src/kani_proofs.rs`
-verifies five bounded symbolic harnesses over that deployed Rust source. This
-closes the bounded source-level parser-refinement step.
+The source-level Rust layer is intentionally separate from extraction:
+`src/encoding.rs` now exposes an internal allocation-free witness layout parser
+used by the public parser, consensus parser, and canonicality predicates, and
+`src/kani_proofs.rs` verifies five bounded symbolic harnesses over that deployed
+Rust source. The same proof module also verifies fifteen bounded PO-5
+transition harnesses over deployed `valid_tx`, `delta_tx`, and `valid_block`
+behavior. This closes the bounded source-level PO-8 parser-refinement step and
+adds bounded source-level PO-5 transition evidence.
 
 The compiled-artifact validation layer is also separate from extraction:
 `verify_compiled_refinement.sh` builds the PO-8 Rust refinement examples in
@@ -170,5 +194,7 @@ and generated-output hashes. `verify_sighash_refinement.sh` performs the same
 release-binary validation pattern for the PO-4 sighash transcript executable.
 `verify_transition_refinement.sh` performs the same release-binary validation
 pattern for the PO-5 transition refinement executable. These give auditable
-translation-validation artifacts for the produced binaries, while still leaving
-compiler correctness outside the current artifact boundary.
+translation-validation artifacts for the produced binaries. The runtime
+refinement validator follows the same certificate pattern for txid/map runtime
+behavior, while still leaving compiler correctness outside the current artifact
+boundary.

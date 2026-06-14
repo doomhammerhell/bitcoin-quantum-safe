@@ -36,3 +36,6 @@ name = "generate_sighash_refinement"
 
 [[example]]
 name = "generate_transition_refinement"
+
+[[example]]
+name = "generate_runtime_refinement"

@@ -8,7 +8,13 @@
 //! Output script format: `<version_byte> <32-byte commitment>` where
 //! commitment P = H(pk) using SHA-256.
 
+#[cfg(not(kani))]
 use std::collections::HashMap;
+#[cfg(kani)]
+use std::slice;
+
+#[cfg(kani)]
+const KANI_UTXO_CAPACITY: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Primitive type aliases
@@ -35,8 +41,9 @@ pub type Witness = Vec<u8>;
 
 /// Reference to a specific output of a previous transaction.
 ///
-/// Must be hashable for use as a key in `UtxoSet` (`HashMap<OutPoint, Output>`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Must be hashable for use as a key in the runtime `UtxoSet`
+/// (`HashMap<OutPoint, Output>`). Kani uses a deterministic finite-map model.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OutPoint {
     /// Transaction id (hash of the transaction that created the output).
     pub txid: [u8; 32],
@@ -99,7 +106,139 @@ pub struct Transaction {
 pub type Block = Vec<Transaction>;
 
 /// The UTXO set: a finite partial function from outpoints to outputs.
+#[cfg(not(kani))]
 pub type UtxoSet = HashMap<OutPoint, Output>;
+
+/// Deterministic finite map used only by Kani to avoid verifier-unsupported OS
+/// randomness and standard-library map internals from `HashMap`'s `RandomState`.
+#[cfg(kani)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UtxoSet {
+    entries: [Option<(OutPoint, Output)>; KANI_UTXO_CAPACITY],
+}
+
+#[cfg(kani)]
+impl UtxoSet {
+    /// Create an empty Kani finite map.
+    pub fn new() -> Self {
+        Self {
+            entries: [None, None, None, None],
+        }
+    }
+
+    /// Insert or replace an output by outpoint, matching `HashMap::insert`
+    /// extensionally for the verifier's bounded finite-map model.
+    pub fn insert(&mut self, outpoint: OutPoint, output: Output) -> Option<Output> {
+        for entry in &mut self.entries {
+            if let Some((existing_outpoint, existing_output)) = entry {
+                if *existing_outpoint == outpoint {
+                    return Some(std::mem::replace(existing_output, output));
+                }
+            }
+        }
+        for entry in &mut self.entries {
+            if entry.is_none() {
+                *entry = Some((outpoint, output));
+                return None;
+            }
+        }
+        unreachable!()
+    }
+
+    /// Lookup an output by outpoint.
+    pub fn get(&self, outpoint: &OutPoint) -> Option<&Output> {
+        for entry in &self.entries {
+            if let Some((existing_outpoint, output)) = entry {
+                if existing_outpoint == outpoint {
+                    return Some(output);
+                }
+            }
+        }
+        None
+    }
+
+    /// Remove an output by outpoint.
+    pub fn remove(&mut self, outpoint: &OutPoint) -> Option<Output> {
+        for entry in &mut self.entries {
+            if entry
+                .as_ref()
+                .map(|(existing_outpoint, _)| existing_outpoint == outpoint)
+                .unwrap_or(false)
+            {
+                return entry.take().map(|(_, output)| output);
+            }
+        }
+        None
+    }
+
+    /// Check whether an outpoint is present.
+    pub fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        self.get(outpoint).is_some()
+    }
+
+    /// Iterate over stored outputs.
+    pub fn values(&self) -> UtxoValues<'_> {
+        UtxoValues {
+            iter: self.entries.iter(),
+        }
+    }
+}
+
+#[cfg(kani)]
+impl Default for UtxoSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Iterator over Kani finite-map values.
+#[cfg(kani)]
+pub struct UtxoValues<'a> {
+    iter: slice::Iter<'a, Option<(OutPoint, Output)>>,
+}
+
+#[cfg(kani)]
+impl<'a> Iterator for UtxoValues<'a> {
+    type Item = &'a Output;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for entry in self.iter.by_ref() {
+            if let Some((_, output)) = entry {
+                return Some(output);
+            }
+        }
+        None
+    }
+}
+
+/// Return a deterministic, key-sorted snapshot of a UTXO set.
+///
+/// Runtime UTXO storage is intentionally a `HashMap`, whose iteration order is
+/// not consensus-significant. Refinement and certificate generators use this
+/// helper to compare map behavior extensionally, independent of hash table
+/// bucket order or randomized hash seeding.
+#[cfg(not(kani))]
+pub fn canonical_utxo_entries(utxo: &UtxoSet) -> Vec<(OutPoint, Output)> {
+    let mut entries: Vec<(OutPoint, Output)> = utxo
+        .iter()
+        .map(|(outpoint, output)| (outpoint.clone(), output.clone()))
+        .collect();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries
+}
+
+/// Return a deterministic, key-sorted snapshot of a Kani finite-map UTXO set.
+#[cfg(kani)]
+pub fn canonical_utxo_entries(utxo: &UtxoSet) -> Vec<(OutPoint, Output)> {
+    let mut entries = Vec::new();
+    for entry in &utxo.entries {
+        if let Some((outpoint, output)) = entry {
+            entries.push((outpoint.clone(), output.clone()));
+        }
+    }
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries
+}
 
 // ---------------------------------------------------------------------------
 // Witness and script classification enums
@@ -209,6 +348,32 @@ mod tests {
         };
         utxo_set.insert(op.clone(), output.clone());
         assert_eq!(utxo_set.get(&op), Some(&output));
+    }
+
+    #[test]
+    fn canonical_utxo_entries_are_key_sorted() {
+        let mut utxo_set: UtxoSet = HashMap::new();
+        let high = OutPoint {
+            txid: [2u8; 32],
+            vout: 0,
+        };
+        let low = OutPoint {
+            txid: [1u8; 32],
+            vout: 1,
+        };
+        let output = Output {
+            script_version: 2,
+            commitment: [0xAB; 32],
+            value: 50_000,
+        };
+
+        utxo_set.insert(high.clone(), output.clone());
+        utxo_set.insert(low.clone(), output);
+
+        let snapshot = canonical_utxo_entries(&utxo_set);
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].0, low);
+        assert_eq!(snapshot[1].0, high);
     }
 
     #[test]
