@@ -75,20 +75,25 @@ formal/coq/extraction/golden_vectors
 formal/coq/extraction/varint_refinement
 formal/coq/extraction/witness_refinement
 formal/coq/extraction/sighash_refinement
+formal/coq/extraction/txid_refinement
 formal/coq/extraction/transition_refinement
 formal/coq/extraction/golden_vectors_extracted.ml
 formal/coq/extraction/golden_vectors_extracted.mli
 formal/coq/extraction/sighash_extracted.ml
 formal/coq/extraction/sighash_extracted.mli
+formal/coq/extraction/txid_extracted.ml
+formal/coq/extraction/txid_extracted.mli
 formal/coq/extraction/transition_extracted.ml
 formal/coq/extraction/transition_extracted.mli
 formal/coq/extraction/coq_varint_refinement.json
 formal/coq/extraction/coq_witness_refinement.json
 formal/coq/extraction/coq_sighash_refinement.json
+formal/coq/extraction/coq_txid_refinement.json
 formal/coq/extraction/coq_transition_refinement.json
 rust_varint_refinement.json
 rust_witness_refinement.json
 rust_sighash_refinement.json
+rust_txid_refinement.json
 rust_transition_refinement.json
 
 # === TLA+ ===

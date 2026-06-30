@@ -1275,14 +1275,14 @@ proptest! {
 // SHALL also satisfy NoDoubleSpend and StateConsistency.
 //
 // NoDoubleSpend: every outpoint appears at most once in the UTXO set.
-//   (Guaranteed by HashMap — keys are unique.)
+//   (Guaranteed by the UtxoStore finite-map contract — keys are unique.)
 // StateConsistency: every outpoint in the UTXO set has a valid output.
-//   (Guaranteed by HashMap — every key maps to exactly one value.)
+//   (Guaranteed by the UtxoStore contract — every key maps to exactly one value.)
 //
 // The key verification after delta_tx:
 //   1. Spent outpoints are removed (not double-spendable)
 //   2. New outpoints are added correctly
-//   3. No outpoint appears twice (HashMap guarantees this)
+//   3. No outpoint appears twice (UtxoStore guarantees this)
 //   4. The UTXO set size is consistent: old_size - inputs_spent + outputs_created
 //
 // Strategy: generate a UTXO set with some legacy and PQ outputs, generate a
@@ -1297,25 +1297,25 @@ proptest! {
 use crate::delta_tx;
 
 /// Check the NoDoubleSpend invariant: every outpoint appears at most once.
-/// For a HashMap this is trivially true (keys are unique), but we verify
+/// For a finite UTXO store this is structurally true, but we verify
 /// the count matches expectations.
 fn check_no_double_spend(utxo_set: &UtxoSet) -> bool {
-    // HashMap keys are unique by construction — collect all keys and
-    // verify no duplicates exist (this is a tautology for HashMap but
+    // UtxoSet keys are unique by construction — collect all keys and
+    // verify no duplicates exist (this is a tautology for finite maps but
     // validates the invariant explicitly).
     let keys: Vec<&OutPoint> = utxo_set.keys().collect();
     let unique_count = keys.len();
-    // If there were duplicates, the HashMap would have fewer entries
+    // If there were duplicates, the finite map would have fewer entries
     // than insertions. Since we can only observe the final state,
     // the invariant holds iff len() == number of unique keys.
     unique_count == utxo_set.len()
 }
 
 /// Check the StateConsistency invariant: every outpoint in the UTXO set
-/// maps to a valid output (non-None). For HashMap this is guaranteed,
+/// maps to a valid output (non-None). For UtxoSet this is guaranteed,
 /// but we verify explicitly.
 fn check_state_consistency(utxo_set: &UtxoSet) -> bool {
-    // Every key must map to a value — HashMap guarantees this.
+    // Every key must map to a value — UtxoSet guarantees this.
     // Additionally verify that outputs have sensible fields.
     for (_op, output) in utxo_set.iter() {
         // script_version should be a known version (0, 1, 2, or other)

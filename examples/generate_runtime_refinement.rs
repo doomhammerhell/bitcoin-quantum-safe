@@ -1,17 +1,17 @@
-//! Runtime txid and UTXO-map refinement summary.
+//! Runtime txid and UTXO-store refinement summary.
 //!
 //! This executable validates two implementation boundaries that are deliberately
 //! outside the Kani finite-map model:
 //!
 //! - `txid_preimage` and `compute_txid` are compared against an independent
 //!   reference transcript and SHA-256 invocation.
-//! - Runtime `HashMap<OutPoint, Output>` behavior is compared extensionally
+//! - Runtime `UtxoSet`/`UtxoStore` behavior is compared extensionally
 //!   against a deterministic vector-backed reference map through insert,
 //!   replace, get, remove, canonical snapshot, and `delta_tx` transitions.
 //!
 //! This is release-binary refinement evidence for the deployed Rust runtime
-//! path. It does not prove SHA-256 collision resistance, HashMap internals,
-//! rustc, LLVM, linker, CPU, or OS correctness.
+//! path. It does not prove SHA-256 collision resistance, UTXO-store backend
+//! internals, rustc, LLVM, linker, CPU, or OS correctness.
 
 use sha2::{Digest as ShaDigest, Sha256};
 
@@ -411,7 +411,7 @@ fn main() {
     println!("  \"txid_case_count\": {},", tx_cases().len());
     println!("  \"map_operation_count\": 8,");
     println!(
-        "  \"observed_functions\": [\"txid_preimage\", \"compute_txid\", \"canonical_utxo_entries\", \"HashMap::insert\", \"HashMap::get\", \"HashMap::remove\", \"delta_tx\"],"
+        "  \"observed_functions\": [\"txid_preimage\", \"compute_txid\", \"canonical_utxo_entries\", \"UtxoSet::insert\", \"UtxoSet::get\", \"UtxoSet::remove\", \"delta_tx\"],"
     );
     println!("  \"hash_mod_1000000007\": {},", digest.h1);
     println!("  \"hash_mod_1000000009\": {},", digest.h2);

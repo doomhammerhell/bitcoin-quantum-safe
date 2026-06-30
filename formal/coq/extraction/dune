@@ -23,6 +23,12 @@
 )
 
 (executable
+ (name txid_refinement)
+ (modules txid_refinement txid_extracted)
+ (flags (:standard -w -27-32-33-39))
+)
+
+(executable
  (name transition_refinement)
  (modules transition_refinement transition_extracted)
  (flags (:standard -w -27-32-33-39))

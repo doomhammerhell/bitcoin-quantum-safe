@@ -6,8 +6,8 @@
 //! deterministic `delta_tx`, sequential in-block dependency handling, and the
 //! block cost invariant. The comparison uses a canonical projection from
 //! abstract Coq outpoint IDs to synthetic Rust `OutPoint`s; it deliberately does
-//! not claim SHA-256 txid, HashMap internals, cryptographic witness validation,
-//! or compiler correctness.
+//! not claim SHA-256 txid, UTXO-store backend internals, cryptographic witness
+//! validation, or compiler correctness.
 
 use std::collections::{HashMap, HashSet};
 

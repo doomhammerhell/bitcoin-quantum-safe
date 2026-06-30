@@ -4,17 +4,19 @@ This directory contains the Coq/Rust extraction-boundary correspondence evidence
 used by CI. For PO-8 it covers bounded witness encoding, varint, consensus-domain
 parser, canonicality, and parser-trace refinement. For PO-4 it covers deterministic
 Sighash v2 transcript/preimage serialization, separated from the SHA-256
-collision-resistance axiom. For PO-5 it covers structural UTXO transition,
+collision-resistance axiom. For PO-5 it covers txid preimage serialization,
+structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
 against the deployed Rust transition functions. The repository-level source
 proof layer is the Kani harness set in `../../../src`: PO-8 parser/layout
 alignment plus bounded PO-5 `valid_tx`, `delta_tx`, and `valid_block`
 transition harnesses. A separate runtime-refinement layer validates txid
-preimage/hash wiring and runtime UTXO-map behavior against deterministic
+preimage/hash wiring and runtime UTXO-store behavior against deterministic
 references. The compiled-artifact
 validation layers are `../../../verify_compiled_refinement.sh`,
 `../../../verify_sighash_refinement.sh`, and
-`../../../verify_transition_refinement.sh`; runtime txid/map validation is
+`../../../verify_txid_refinement.sh`, and
+`../../../verify_transition_refinement.sh`; runtime txid/store validation is
 `../../../verify_runtime_refinement.sh`.
 
 ## Source of Truth
@@ -55,6 +57,14 @@ validation layers are `../../../verify_compiled_refinement.sh`,
 - `sighash_refinement.ml` summarizes the extracted Coq sighash transcript
   behavior over a deterministic matrix. The matching Rust executable is
   `examples/generate_sighash_refinement.rs`.
+- `TxidExtraction.v` exposes the Coq txid preimage transcript from
+  `TxidPreimage.v`, including the domain tag, input outpoint serialization,
+  output serialization, and full pre-hash transaction transcript.
+- `ExtractTxidVectors.v` is the extraction driver that generates
+  `txid_extracted.ml`.
+- `txid_refinement.ml` summarizes the extracted txid preimage behavior over
+  deterministic count-delimited transaction matrices. The matching Rust
+  executable is `examples/generate_txid_refinement.rs`.
 - `TransitionExtraction.v` exposes structural UTXO transition functions from
   `UTXOTransitions.v`: lookup/remove/add/delta, duplicate-input detection,
   input/output value sums, migration/freeze checks, structural `valid_tx`,
@@ -89,9 +99,17 @@ compiler/toolchain execution boundary.
 
 ### PO-5 UTXO Transition Scope
 
-The PO-5 transition refinement layer is structural and extensional. Coq models
-UTXO sets as association lists indexed by `nat` outpoint IDs. Rust models UTXO
-sets as `HashMap<OutPoint, Output>`. The harness uses a deterministic projection:
+The PO-5 txid and transition refinement layer is structural and extensional.
+`TxidPreimage.v` proves structural injectivity of the domain-separated txid
+transcript over `TxidShape`: version, input outpoints, outputs, and locktime.
+This is the correct projection because witness bytes are intentionally excluded
+from txid computation. The Coq-extracted txid harness compares those preimage
+bytes against Rust's deployed `txid_preimage` over count-delimited transaction
+matrices.
+
+Coq models UTXO sets as association lists indexed by `nat` outpoint IDs. Rust
+models UTXO sets through the `UtxoSet`/`UtxoStore` extensional contract. The
+harness uses a deterministic projection:
 initial Coq IDs map to synthetic Rust outpoints; fresh Coq IDs map to
 `compute_txid(tx), vout` for the corresponding Rust transaction output.
 
@@ -105,9 +123,11 @@ spends at `H_c`, mixed PQ/legacy inputs, fee-preserving multi-input cases,
 sequential intra-block dependency, intra-block double spend, and exact/over
 block-cost boundaries.
 
-This does not prove SHA-256 txid collision resistance, Rust `HashMap` internals,
+This does not prove SHA-256 txid collision resistance, UTXO-store backend internals,
 PQ witness cryptographic verification, or compiler/toolchain correctness.
-`verify_transition_refinement.sh` adds the release-binary validation layer and
+`verify_txid_refinement.sh` adds the txid release-binary validation layer and
+emits `target/txid-refinement/txid_refinement_certificate.json`.
+`verify_transition_refinement.sh` adds the transition release-binary validation layer and
 emits `target/transition-refinement/transition_refinement_certificate.json`.
 The source-level layer adds fifteen Kani bounded PO-5 harnesses for the
 deployed Rust implementation: six `valid_tx` structural guard cases, five
@@ -117,13 +137,13 @@ a deterministic fixed-capacity finite map and `compute_txid` is a bounded
 structural model, so the verifier is not forced through OS-randomized hash
 seeding or SHA-256 internals. Those harnesses complement the extracted matrix,
 but are not an unbounded source-level transition proof and do not prove txid
-collision resistance, runtime `HashMap` internals, PQ witness cryptographic
+collision resistance, UTXO-store backend internals, PQ witness cryptographic
 verification, or compiler output.
 `verify_runtime_refinement.sh` adds a runtime release-binary validation layer for
 `txid_preimage`, `compute_txid`, canonical UTXO snapshots, and runtime
-`HashMap` insert/get/remove/`delta_tx` behavior against independent deterministic
-references. This narrows the txid/map implementation boundary, but it is not a
-proof of SHA-256 primitive correctness, hash-table internals, or compiler
+`UtxoSet` insert/get/remove/`delta_tx` behavior against independent deterministic
+references. This narrows the txid/store implementation boundary, but it is not a
+proof of SHA-256 primitive correctness, store backend internals, or compiler
 output.
 
 ### PO-8 Witness Encoding Scope
@@ -195,6 +215,6 @@ release-binary validation pattern for the PO-4 sighash transcript executable.
 `verify_transition_refinement.sh` performs the same release-binary validation
 pattern for the PO-5 transition refinement executable. These give auditable
 translation-validation artifacts for the produced binaries. The runtime
-refinement validator follows the same certificate pattern for txid/map runtime
+refinement validator follows the same certificate pattern for txid/store runtime
 behavior, while still leaving compiler correctness outside the current artifact
 boundary.

@@ -36,7 +36,9 @@ pub mod params;
 // ---------------------------------------------------------------------------
 
 // Types (Req 2.1, 2.2)
-pub use types::{Block, Commitment, PubKey, ScriptType, Signature, Transaction, UtxoSet};
+pub use types::{
+    Block, Commitment, PubKey, ScriptType, Signature, Transaction, UtxoSet, UtxoStore,
+};
 
 // Encoding: witness serialization and parsing (Req 2.3, 6.5, 11.1–11.5)
 pub use encoding::{

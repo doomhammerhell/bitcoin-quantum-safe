@@ -73,10 +73,10 @@ release_binary = "target/release/examples/generate_runtime_refinement"
 generated_output = Path(runtime_refinement_path).relative_to(root)
 
 certificate = {
-    "validation": "Runtime txid and UTXO-map refinement validation",
+    "validation": "Runtime txid and UTXO-store refinement validation",
     "scope": {
-        "claim": "release binary validates txid preimage/compute_txid wiring and runtime UTXO HashMap extensional behavior against independent deterministic references over the configured matrix",
-        "non_claim": "this is not a proof of SHA-256 collision resistance, SHA-256 implementation correctness, HashMap internals, rustc, LLVM, linker, CPU, or OS correctness",
+        "claim": "release binary validates txid preimage/compute_txid wiring and runtime UTXO-store extensional behavior against independent deterministic references over the configured matrix",
+        "non_claim": "this is not a proof of SHA-256 collision resistance, SHA-256 implementation correctness, UTXO-store backend internals, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "runtime_summary": runtime_value,
     "toolchain": {
@@ -95,6 +95,6 @@ with open(certificate_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print("=== SUCCESS ===")
-print("Compiled runtime refinement binary validated txid and UTXO-map behavior.")
+print("Compiled runtime refinement binary validated txid and UTXO-store behavior.")
 print(f"Certificate: {certificate_path}")
 PY

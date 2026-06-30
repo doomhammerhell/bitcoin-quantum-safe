@@ -4,7 +4,7 @@
 # This script:
 # 1. Compiles all Coq modules in the correct order
 # 2. Generates OCaml extraction from WitnessExtraction.v, SighashExtraction.v,
-#    and TransitionExtraction.v
+#    TxidExtraction.v, and TransitionExtraction.v
 # 3. Compiles the extracted OCaml code and vector harness
 # 4. Runs the golden vector generator
 # 5. Compares with Rust implementation
@@ -26,6 +26,7 @@ coqc -Q . BitcoinPQ VarintConcrete.v
 coqc -Q . BitcoinPQ SpendPredPQ.v
 coqc -Q . BitcoinPQ UTXOTransitions.v
 coqc -Q . BitcoinPQ SighashV2.v
+coqc -Q . BitcoinPQ TxidPreimage.v
 
 echo "[2/5] Base modules compiled successfully"
 
@@ -34,6 +35,7 @@ echo "[3/5] Compiling extraction module..."
 cd extraction
 coqc -Q .. BitcoinPQ -I .. WitnessExtraction.v
 coqc -Q .. BitcoinPQ -I .. SighashExtraction.v
+coqc -Q .. BitcoinPQ -I .. TxidExtraction.v
 coqc -Q .. BitcoinPQ -I .. TransitionExtraction.v
 
 echo "[4/5] Extraction module compiled"
@@ -42,6 +44,7 @@ echo "[4/5] Extraction module compiled"
 echo "[5/5] Extracting to OCaml..."
 coqc -Q .. BitcoinPQ ExtractWitnessVectors.v
 coqc -Q .. BitcoinPQ ExtractSighashVectors.v
+coqc -Q .. BitcoinPQ ExtractTxidVectors.v
 coqc -Q .. BitcoinPQ ExtractTransitionVectors.v
 
 echo "=========================================="
@@ -52,11 +55,13 @@ echo "=========================================="
 echo "Compiling OCaml golden vector generator..."
 ocamlc -c golden_vectors_extracted.mli golden_vectors_extracted.ml
 ocamlc -c sighash_extracted.mli sighash_extracted.ml
+ocamlc -c txid_extracted.mli txid_extracted.ml
 ocamlc -c transition_extracted.mli transition_extracted.ml
 ocamlc -o golden_vectors golden_vectors_extracted.cmo golden_vectors.ml
 ocamlc -o varint_refinement golden_vectors_extracted.cmo varint_refinement.ml
 ocamlc -o witness_refinement golden_vectors_extracted.cmo witness_refinement.ml
 ocamlc -o sighash_refinement sighash_extracted.cmo sighash_refinement.ml
+ocamlc -o txid_refinement txid_extracted.cmo txid_refinement.ml
 ocamlc -o transition_refinement transition_extracted.cmo transition_refinement.ml
 
 echo "Running golden vector generator..."
@@ -69,6 +74,8 @@ echo "Running Coq-extracted witness refinement summary..."
 ./witness_refinement > coq_witness_refinement.json
 echo "Running Coq-extracted sighash transcript refinement summary..."
 ./sighash_refinement > coq_sighash_refinement.json
+echo "Running Coq-extracted txid preimage refinement summary..."
+./txid_refinement > coq_txid_refinement.json
 echo "Running Coq-extracted transition refinement summary..."
 ./transition_refinement > coq_transition_refinement.json
 
@@ -82,6 +89,8 @@ echo "Generating Rust witness refinement summary..."
 cargo run --example generate_witness_refinement > rust_witness_refinement.json
 echo "Generating Rust sighash transcript refinement summary..."
 cargo run --example generate_sighash_refinement > rust_sighash_refinement.json
+echo "Generating Rust txid preimage refinement summary..."
+cargo run --example generate_txid_refinement > rust_txid_refinement.json
 echo "Generating Rust transition refinement summary..."
 cargo run --example generate_transition_refinement > rust_transition_refinement.json
 
@@ -148,6 +157,20 @@ try:
         rust_sighash = json.load(f)
 except FileNotFoundError:
     print("ERROR: Rust sighash refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('formal/coq/extraction/coq_txid_refinement.json', 'r') as f:
+        coq_txid = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq txid refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_txid_refinement.json', 'r') as f:
+        rust_txid = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust txid refinement summary not found.")
     sys.exit(1)
 
 try:
@@ -233,6 +256,12 @@ if coq_sighash != rust_sighash:
     print(f"Rust: {rust_sighash}")
     sys.exit(1)
 
+if coq_txid != rust_txid:
+    print("\n=== TXID PREIMAGE REFINEMENT MISMATCH ===")
+    print(f"Coq:  {coq_txid}")
+    print(f"Rust: {rust_txid}")
+    sys.exit(1)
+
 if coq_transition != rust_transition:
     print("\n=== TRANSITION REFINEMENT MISMATCH ===")
     print(f"Coq:  {coq_transition}")
@@ -244,10 +273,11 @@ print("All bounded vectors match byte-for-byte!")
 print("Exhaustive u16 varint refinement summaries match!")
 print("Witness parser/serializer/consensus-domain/trace refinement summaries match!")
 print("Sighash transcript refinement summaries match!")
+print("Txid preimage refinement summaries match!")
 print("UTXO transition refinement summaries match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
-print("PO-5: Coq UTXO transition model ↔ Rust transition implementation extraction-boundary evidence")
+print("PO-5: Coq txid/UTXO transition model ↔ Rust implementation extraction-boundary evidence")
 PYEOF
 
 echo ""
@@ -264,6 +294,8 @@ echo "  - formal/coq/extraction/coq_witness_refinement.json"
 echo "  - rust_witness_refinement.json"
 echo "  - formal/coq/extraction/coq_sighash_refinement.json"
 echo "  - rust_sighash_refinement.json"
+echo "  - formal/coq/extraction/coq_txid_refinement.json"
+echo "  - rust_txid_refinement.json"
 echo "  - formal/coq/extraction/coq_transition_refinement.json"
 echo "  - rust_transition_refinement.json"
 echo ""
@@ -274,7 +306,9 @@ echo "  PO-3 (Parse Canonicality): VERIFIED"
 echo "  PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.v + Rust PBT)"
 echo "  PO-4 (Rust transcript):     COQ-EXTRACTED VS RUST PREIMAGE SERIALIZATION REFINEMENT"
 echo "  PO-4 (Compiled artifact):   RUN ./verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
+echo "  PO-5 (Txid preimage):      COQ-EXTRACTED VS RUST TXID PREIMAGE REFINEMENT"
 echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST TRANSITION REFINEMENT EVIDENCE"
+echo "  PO-5 (Txid compiled):      RUN ./verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
 echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"

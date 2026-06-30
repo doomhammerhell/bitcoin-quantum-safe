@@ -100,11 +100,11 @@ certificate = {
     "validation": "PO-5 UTXO transition refinement validation",
     "scope": {
         "claim": "release binary produces the same transition refinement summary as the Coq-extracted structural UTXO transition model over the deterministic projection matrix",
-        "non_claim": "this is not a proof of SHA-256 txid collision resistance, Rust HashMap internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
+        "non_claim": "this is not a proof of SHA-256 txid collision resistance, UTXO-store backend internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "projection": {
         "coq": "association-list UTXO indexed by abstract nat outpoint IDs",
-        "rust": "HashMap UTXO indexed by synthetic OutPoint values; fresh IDs are mapped to compute_txid(tx), vout",
+        "rust": "UtxoSet/UtxoStore UTXO indexed by synthetic OutPoint values; fresh IDs are mapped to compute_txid(tx), vout",
     },
     "toolchain": {
         "rustc": command_output("rustc", "-Vv"),

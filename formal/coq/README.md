@@ -5,16 +5,18 @@ The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-7, and
 the bounded varint/canonical witness discharge used for PO-8 evidence. PO-4 is
 proved for the Coq sighash model under the SHA-256 collision-resistance axiom
 and now includes a Coq-extracted transcript constructor compared against the
-Rust preimage serialization path. PO-5 now includes Coq-extracted structural
-transition summaries compared against Rust transaction/block transition
-functions, plus Kani bounded source-level harnesses for deployed `valid_tx`,
-`delta_tx`, and `valid_block` transition behavior. The runtime layer also
-validates txid preimage/hash wiring and UTXO-map extensional behavior against
-independent deterministic references. Rust property-based tests, Kani
+Rust preimage serialization path. PO-5 now includes a mechanized
+`txid_preimage` transcript with structural injectivity over the committed
+txid shape, Coq-extracted txid/transition summaries compared against Rust
+transaction/block transition functions, plus Kani bounded source-level
+harnesses for deployed `valid_tx`, `delta_tx`, and `valid_block` transition
+behavior. The runtime layer also validates txid preimage/hash wiring and
+UTXO-store extensional behavior against independent deterministic references.
+Rust property-based tests, Kani
 source-level bounded harnesses, and release-binary validation provide executable
 implementation evidence for the concrete code; proofs of SHA-256 primitive
-correctness, runtime `HashMap` internals, unbounded source-level transition
-refinement, and compiler correctness remain outside the current proof boundary.
+correctness, unbounded source-level transition refinement, and compiler
+correctness remain outside the current proof boundary.
 
 The repository-level proof-status ledger is
 [`../../PROOF_OBLIGATIONS.md`](../../PROOF_OBLIGATIONS.md).
@@ -72,6 +74,7 @@ modeled transcript layout.
 
 | Theorem | PO | Property |
 |---|---|---|
+| `txid_preimage_injective` | PO-5 evidence | Structural injectivity of the domain-separated txid transcript over `TxidShape`: version, input outpoints, outputs, locktime |
 | `delta_tx_deterministic_ext` | PO-5 | Transition determinism |
 | `delta_tx_preserves_no_double_spend` | PO-5 | No-double-spend preservation |
 | `valid_tx_structural` | PO-5 evidence | Extractable structural transaction validator mirroring duplicate-input, missing-input, value-conservation, migration, and freeze checks |
@@ -80,9 +83,15 @@ modeled transcript layout.
 | `cost_equals_weight` | PO-7 | Exact equality for the modeled weight function |
 | `block_cost_bounded_by_weights` | PO-7 | Block-level cost bound |
 
+`TxidPreimage.v` defines the extractable txid transcript and proves injectivity
+over the committed fields. The theorem is intentionally scoped to `TxidShape`,
+not full `Transaction`, because witness bytes are not part of txid computation.
+`extraction/TxidExtraction.v`, `extraction/ExtractTxidVectors.v`, and
+`extraction/txid_refinement.ml` compare that transcript against Rust's
+`txid_preimage` over count-delimited transaction matrices. Separately,
 `extraction/TransitionExtraction.v`, `extraction/ExtractTransitionVectors.v`, and
-`extraction/transition_refinement.ml` expose and summarize these structural
-transition functions. The Rust counterpart
+`extraction/transition_refinement.ml` expose and summarize structural transition
+functions. The Rust counterpart
 `../../examples/generate_transition_refinement.rs` calls `valid_tx`, `delta_tx`,
 `valid_block`, `check_migration_rules`, `check_no_frozen_inputs`, `cost_tx`,
 `weight_tx`, and `check_block_cost` over the same projected matrix. The matrix
@@ -98,15 +107,17 @@ is a deterministic fixed-capacity finite map and `compute_txid` is a bounded
 structural model so the verifier is not forced through OS-randomized hash
 seeding or SHA-256 internals. These harnesses complement the extracted matrix,
 but do not constitute an unbounded source-level transition refinement proof,
-nor do they prove SHA-256 txid collision resistance, runtime `HashMap`
-internals, PQ witness cryptographic verification, compiler correctness, or
-toolchain correctness.
+nor do they prove SHA-256 txid collision resistance, PQ witness cryptographic
+verification, compiler correctness, or toolchain correctness.
+`../../verify_txid_refinement.sh` validates the optimized txid refinement binary
+against the Coq-extracted txid transcript summary.
 `../../verify_runtime_refinement.sh` separately validates the optimized runtime
 refinement binary against independent references for the domain-separated
 `txid_preimage`, SHA-256 `compute_txid` wiring, canonical UTXO snapshots, and
-runtime `HashMap` insert/get/remove/`delta_tx` behavior. This narrows the
-runtime txid/map correspondence boundary without proving SHA-256 primitive
-correctness, hash-table internals, or compiler/toolchain correctness.
+runtime `UtxoSet` insert/get/remove/`delta_tx` behavior through the explicit
+`UtxoStore` extensional contract. This narrows the runtime txid/store
+correspondence boundary without proving SHA-256 primitive correctness, store
+backend internals, or compiler/toolchain correctness.
 
 ### PO-8: Implementation Correspondence — Bounded Extraction + Source/Compiled Evidence
 
@@ -123,7 +134,7 @@ correctness, hash-table internals, or compiler/toolchain correctness.
 | Consensus witness-size guard | `max_witness_size = 16000 <= max_u16`, plus parsed/serialized component length and bounded-canonicality theorems |
 | Consensus parser theorem | `parse_consensus_witness_concrete_*` proves that the consensus-domain parser equals the byte-level parser below the cap, rejects above the cap, and only accepts canonical modeled-domain witnesses |
 | Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 15 PO-5 harnesses verify bounded deployed `valid_tx`, `delta_tx`, and `valid_block` transition behavior |
-| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_runtime_refinement.sh` validates txid/map runtime behavior against independent deterministic references |
+| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
 | Full CompactSize coverage | Rust implements/tests `0xFE` and `0xFF`; not yet modeled in Coq |
 | Compiler correctness | Not proved |
 
@@ -166,17 +177,17 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   `tagged_hash` implementation. The current extracted transcript refinement
   covers deterministic serialization/preimage assembly, not the SHA-256
   compression function, BIP341 mechanization, or compiler/toolchain correctness.
-- If full end-to-end PO-5 closure is required, strengthen the current
-  extraction-boundary evidence and bounded transition harnesses into an
-  unbounded source-level Rust transition proof or a verified translation path,
-  and prove/refine the deployed txid construction. The current transition
-  refinement covers structural transaction/block semantics over deterministic
-  edge-case matrices, validates the release binary output against the
-  Coq-extracted summary, checks bounded deployed `valid_tx`, `delta_tx`, and
-  `valid_block` behavior with Kani, and validates runtime txid/map behavior
-  against independent deterministic references; it does not prove unbounded
-  source-level transition refinement, SHA-256 primitive correctness/collision
-  resistance, `HashMap` internals, PQ witness cryptographic verification, or
+- If full end-to-end PO-5 closure is required, continue on the selected
+  Coq-first path: move the consensus transition core toward verified/extracted
+  source and keep Rust adapters thin. Verus, Creusot, or Prusti can then target
+  adapter/store obligations, but they are not the primary path for proving
+  consensus transition semantics. The current transition refinement covers
+  structural transaction/block semantics over deterministic edge-case matrices,
+  validates txid and transition release binaries against Coq-extracted
+  summaries, checks bounded deployed `valid_tx`, `delta_tx`, and `valid_block`
+  behavior with Kani, and validates runtime txid/store behavior against
+  independent deterministic references; it does not prove SHA-256 primitive
+  correctness/collision resistance, PQ witness cryptographic verification, or
   compiler/toolchain correctness.
 - Connect the finite TLA+ PO-6 model to the Coq/Rust transition artifacts if the
   project requires a single cross-artifact proof ledger.

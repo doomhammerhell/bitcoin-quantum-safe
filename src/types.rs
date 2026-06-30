@@ -4,12 +4,13 @@
 //! witness versions, and script type classification.
 //!
 //! The UTXO set is a finite partial function from outpoints to outputs
-//! (Requirements 2.1, 2.2). OutPoint is hashable for HashMap usage.
+//! (Requirements 2.1, 2.2). The runtime representation is intentionally
+//! hidden behind an extensional store contract.
 //! Output script format: `<version_byte> <32-byte commitment>` where
 //! commitment P = H(pk) using SHA-256.
 
 #[cfg(not(kani))]
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 #[cfg(kani)]
 use std::slice;
 
@@ -41,8 +42,8 @@ pub type Witness = Vec<u8>;
 
 /// Reference to a specific output of a previous transaction.
 ///
-/// Must be hashable for use as a key in the runtime `UtxoSet`
-/// (`HashMap<OutPoint, Output>`). Kani uses a deterministic finite-map model.
+/// Must be hashable for use as a runtime UTXO-store key.
+/// Kani uses a deterministic finite-map model.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OutPoint {
     /// Transaction id (hash of the transaction that created the output).
@@ -105,9 +106,162 @@ pub struct Transaction {
 /// A block is a vector of transactions.
 pub type Block = Vec<Transaction>;
 
-/// The UTXO set: a finite partial function from outpoints to outputs.
+/// Extensional contract for UTXO stores.
+///
+/// Consensus code must depend on these partial-function operations rather than
+/// on the concrete runtime map. Two stores are equivalent for protocol
+/// refinement when `canonical_entries` returns the same key-sorted snapshot.
+pub trait UtxoStore {
+    /// Insert or replace an output by outpoint.
+    fn insert(&mut self, outpoint: OutPoint, output: Output) -> Option<Output>;
+
+    /// Lookup an output by outpoint.
+    fn get(&self, outpoint: &OutPoint) -> Option<&Output>;
+
+    /// Remove an output by outpoint.
+    fn remove(&mut self, outpoint: &OutPoint) -> Option<Output>;
+
+    /// Return `true` iff `get(outpoint)` returns `Some(_)`.
+    fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        self.get(outpoint).is_some()
+    }
+
+    /// Number of bindings in the finite store.
+    fn len(&self) -> usize;
+
+    /// Return `true` iff the finite store has no bindings.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Deterministic key-sorted snapshot for extensional comparison.
+    fn canonical_entries(&self) -> Vec<(OutPoint, Output)>;
+}
+
+/// Runtime UTXO set: a finite partial function from outpoints to outputs.
+///
+/// The concrete representation is a `HashMap`, but callers intentionally see
+/// only the partial-function API above. This keeps transition reasoning tied
+/// to extensional map behavior rather than randomized hash-table internals.
 #[cfg(not(kani))]
-pub type UtxoSet = HashMap<OutPoint, Output>;
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct UtxoSet {
+    entries: HashMap<OutPoint, Output>,
+}
+
+#[cfg(not(kani))]
+impl UtxoSet {
+    /// Create an empty runtime UTXO set.
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Insert or replace an output by outpoint.
+    pub fn insert(&mut self, outpoint: OutPoint, output: Output) -> Option<Output> {
+        self.entries.insert(outpoint, output)
+    }
+
+    /// Lookup an output by outpoint.
+    pub fn get(&self, outpoint: &OutPoint) -> Option<&Output> {
+        self.entries.get(outpoint)
+    }
+
+    /// Remove an output by outpoint.
+    pub fn remove(&mut self, outpoint: &OutPoint) -> Option<Output> {
+        self.entries.remove(outpoint)
+    }
+
+    /// Check whether an outpoint is present.
+    pub fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        self.entries.contains_key(outpoint)
+    }
+
+    /// Number of bindings in the finite store.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return `true` iff the finite store has no bindings.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Iterate over stored outputs.
+    pub fn values(&self) -> hash_map::Values<'_, OutPoint, Output> {
+        self.entries.values()
+    }
+
+    /// Iterate over stored bindings. Iteration order is not consensus-significant.
+    pub fn iter(&self) -> hash_map::Iter<'_, OutPoint, Output> {
+        self.entries.iter()
+    }
+
+    /// Iterate over stored outpoints. Iteration order is not consensus-significant.
+    pub fn keys(&self) -> hash_map::Keys<'_, OutPoint, Output> {
+        self.entries.keys()
+    }
+
+    /// Deterministic key-sorted snapshot for extensional comparison.
+    pub fn canonical_entries(&self) -> Vec<(OutPoint, Output)> {
+        let mut entries: Vec<(OutPoint, Output)> = self
+            .entries
+            .iter()
+            .map(|(outpoint, output)| (outpoint.clone(), output.clone()))
+            .collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries
+    }
+}
+
+#[cfg(not(kani))]
+impl<'a> IntoIterator for &'a UtxoSet {
+    type Item = (&'a OutPoint, &'a Output);
+    type IntoIter = hash_map::Iter<'a, OutPoint, Output>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
+}
+
+#[cfg(not(kani))]
+impl From<HashMap<OutPoint, Output>> for UtxoSet {
+    fn from(entries: HashMap<OutPoint, Output>) -> Self {
+        Self { entries }
+    }
+}
+
+#[cfg(not(kani))]
+impl UtxoStore for UtxoSet {
+    fn insert(&mut self, outpoint: OutPoint, output: Output) -> Option<Output> {
+        UtxoSet::insert(self, outpoint, output)
+    }
+
+    fn get(&self, outpoint: &OutPoint) -> Option<&Output> {
+        UtxoSet::get(self, outpoint)
+    }
+
+    fn remove(&mut self, outpoint: &OutPoint) -> Option<Output> {
+        UtxoSet::remove(self, outpoint)
+    }
+
+    fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        UtxoSet::contains_key(self, outpoint)
+    }
+
+    fn len(&self) -> usize {
+        UtxoSet::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        UtxoSet::is_empty(self)
+    }
+
+    fn canonical_entries(&self) -> Vec<(OutPoint, Output)> {
+        UtxoSet::canonical_entries(self)
+    }
+}
 
 /// Deterministic finite map used only by Kani to avoid verifier-unsupported OS
 /// randomness and standard-library map internals from `HashMap`'s `RandomState`.
@@ -176,11 +330,33 @@ impl UtxoSet {
         self.get(outpoint).is_some()
     }
 
+    /// Number of bindings in the finite store.
+    pub fn len(&self) -> usize {
+        self.entries.iter().filter(|entry| entry.is_some()).count()
+    }
+
+    /// Return `true` iff the finite store has no bindings.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Iterate over stored outputs.
     pub fn values(&self) -> UtxoValues<'_> {
         UtxoValues {
             iter: self.entries.iter(),
         }
+    }
+
+    /// Deterministic key-sorted snapshot for extensional comparison.
+    pub fn canonical_entries(&self) -> Vec<(OutPoint, Output)> {
+        let mut entries = Vec::new();
+        for entry in &self.entries {
+            if let Some((outpoint, output)) = entry {
+                entries.push((outpoint.clone(), output.clone()));
+            }
+        }
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries
     }
 }
 
@@ -188,6 +364,37 @@ impl UtxoSet {
 impl Default for UtxoSet {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(kani)]
+impl UtxoStore for UtxoSet {
+    fn insert(&mut self, outpoint: OutPoint, output: Output) -> Option<Output> {
+        UtxoSet::insert(self, outpoint, output)
+    }
+
+    fn get(&self, outpoint: &OutPoint) -> Option<&Output> {
+        UtxoSet::get(self, outpoint)
+    }
+
+    fn remove(&mut self, outpoint: &OutPoint) -> Option<Output> {
+        UtxoSet::remove(self, outpoint)
+    }
+
+    fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        UtxoSet::contains_key(self, outpoint)
+    }
+
+    fn len(&self) -> usize {
+        UtxoSet::len(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        UtxoSet::is_empty(self)
+    }
+
+    fn canonical_entries(&self) -> Vec<(OutPoint, Output)> {
+        UtxoSet::canonical_entries(self)
     }
 }
 
@@ -213,31 +420,19 @@ impl<'a> Iterator for UtxoValues<'a> {
 
 /// Return a deterministic, key-sorted snapshot of a UTXO set.
 ///
-/// Runtime UTXO storage is intentionally a `HashMap`, whose iteration order is
-/// not consensus-significant. Refinement and certificate generators use this
-/// helper to compare map behavior extensionally, independent of hash table
-/// bucket order or randomized hash seeding.
+/// Runtime UTXO storage has intentionally unspecified iteration order.
+/// Refinement and certificate generators use this helper to compare map
+/// behavior extensionally, independent of hash table bucket order or randomized
+/// hash seeding.
 #[cfg(not(kani))]
 pub fn canonical_utxo_entries(utxo: &UtxoSet) -> Vec<(OutPoint, Output)> {
-    let mut entries: Vec<(OutPoint, Output)> = utxo
-        .iter()
-        .map(|(outpoint, output)| (outpoint.clone(), output.clone()))
-        .collect();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-    entries
+    utxo.canonical_entries()
 }
 
 /// Return a deterministic, key-sorted snapshot of a Kani finite-map UTXO set.
 #[cfg(kani)]
 pub fn canonical_utxo_entries(utxo: &UtxoSet) -> Vec<(OutPoint, Output)> {
-    let mut entries = Vec::new();
-    for entry in &utxo.entries {
-        if let Some((outpoint, output)) = entry {
-            entries.push((outpoint.clone(), output.clone()));
-        }
-    }
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-    entries
+    utxo.canonical_entries()
 }
 
 // ---------------------------------------------------------------------------
@@ -335,8 +530,8 @@ mod tests {
 
     #[test]
     fn outpoint_is_hashable() {
-        // OutPoint must be usable as a HashMap key (UtxoSet).
-        let mut utxo_set: UtxoSet = HashMap::new();
+        // OutPoint must be usable as a runtime UTXO-store key.
+        let mut utxo_set = UtxoSet::new();
         let op = OutPoint {
             txid: [0u8; 32],
             vout: 0,
@@ -352,7 +547,7 @@ mod tests {
 
     #[test]
     fn canonical_utxo_entries_are_key_sorted() {
-        let mut utxo_set: UtxoSet = HashMap::new();
+        let mut utxo_set = UtxoSet::new();
         let high = OutPoint {
             txid: [2u8; 32],
             vout: 0,

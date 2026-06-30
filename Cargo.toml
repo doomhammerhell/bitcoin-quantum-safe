@@ -35,6 +35,9 @@ name = "generate_witness_refinement"
 name = "generate_sighash_refinement"
 
 [[example]]
+name = "generate_txid_refinement"
+
+[[example]]
 name = "generate_transition_refinement"
 
 [[example]]
