@@ -515,12 +515,110 @@ Definition valid_block_structural
   valid_block_transitions_structural U txs height config fresh_id &&
   check_block_cost_structural txs.
 
+(** Operational block-application semantics for extraction.
+
+    [valid_block_structural] is the consensus predicate; the functions below
+    expose the same transition semantics as an executable state transformer.
+    This is the boundary used by the Rust refinement harness when comparing
+    final UTXO states, not only accept/reject bits. *)
+Fixpoint apply_block_transitions_structural
+    (U : UtxoSet)
+    (txs : list Transaction)
+    (height : nat)
+    (config : MigrationConfig)
+    (fresh_id : nat) : option UtxoSet :=
+  match txs with
+  | [] => Some U
+  | tx :: rest =>
+      if valid_tx_structural U tx height config then
+        apply_block_transitions_structural
+          (delta_tx U tx fresh_id)
+          rest
+          height
+          config
+          (fresh_id + length (outputs tx))
+      else None
+  end.
+
+Definition apply_valid_block_structural
+    (U : UtxoSet)
+    (txs : list Transaction)
+    (height : nat)
+    (config : MigrationConfig)
+    (fresh_id : nat) : option UtxoSet :=
+  match apply_block_transitions_structural U txs height config fresh_id with
+  | Some U' =>
+      if check_block_cost_structural txs then Some U' else None
+  | None => None
+  end.
+
+Definition option_is_some {A : Type} (value : option A) : bool :=
+  match value with
+  | Some _ => true
+  | None => false
+  end.
+
 Theorem valid_block_structural_deterministic :
   forall U txs height config fresh_id,
     valid_block_structural U txs height config fresh_id =
     valid_block_structural U txs height config fresh_id.
 Proof.
   reflexivity.
+Qed.
+
+Theorem apply_block_transitions_structural_equiv :
+  forall U txs height config fresh_id,
+    option_is_some
+      (apply_block_transitions_structural U txs height config fresh_id) =
+    valid_block_transitions_structural U txs height config fresh_id.
+Proof.
+  intros U txs. revert U.
+  induction txs as [| tx rest IH]; intros U height config fresh_id; simpl.
+  - reflexivity.
+  - destruct (valid_tx_structural U tx height config) eqn:Hvalid.
+    + apply IH.
+    + reflexivity.
+Qed.
+
+Theorem apply_valid_block_structural_equiv :
+  forall U txs height config fresh_id,
+    option_is_some (apply_valid_block_structural U txs height config fresh_id) =
+    valid_block_structural U txs height config fresh_id.
+Proof.
+  intros U txs height config fresh_id.
+  pose proof
+    (apply_block_transitions_structural_equiv U txs height config fresh_id)
+    as Htransitions.
+  unfold apply_valid_block_structural, valid_block_structural.
+  destruct (apply_block_transitions_structural U txs height config fresh_id)
+    as [U' |] eqn:Happly; simpl.
+  - simpl in Htransitions. rewrite <- Htransitions.
+    destruct (check_block_cost_structural txs); reflexivity.
+  - simpl in Htransitions. rewrite <- Htransitions. reflexivity.
+Qed.
+
+Lemma option_is_some_exists :
+  forall (A : Type) (value : option A),
+    option_is_some value = true <-> exists result, value = Some result.
+Proof.
+  intros A value. destruct value as [result |]; simpl.
+  - split.
+    + intros _. exists result. reflexivity.
+    + intros _. reflexivity.
+  - split.
+    + discriminate.
+    + intros [result H]. discriminate.
+Qed.
+
+Theorem apply_valid_block_structural_some_iff_valid :
+  forall U txs height config fresh_id,
+    (exists U',
+      apply_valid_block_structural U txs height config fresh_id = Some U') <->
+    valid_block_structural U txs height config fresh_id = true.
+Proof.
+  intros U txs height config fresh_id.
+  rewrite <- apply_valid_block_structural_equiv.
+  symmetry. apply option_is_some_exists.
 Qed.
 
 (** If the block cost invariant holds, then each transaction's cost

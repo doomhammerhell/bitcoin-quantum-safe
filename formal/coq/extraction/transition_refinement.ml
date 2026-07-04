@@ -260,19 +260,6 @@ let cost_cases =
     { cost_name = "over-cost-limit"; cost_shapes = [ ([ 4_000_000 ], 0) ] };
   ]
 
-let rec apply_block utxo txs height fresh_id =
-  match txs with
-  | [] -> Some utxo
-  | tx :: rest ->
-      if TransitionExtraction.extract_valid_tx_structural utxo tx height config
-      then
-        apply_block
-          (TransitionExtraction.extract_delta_tx utxo tx fresh_id)
-          rest
-          height
-          (fresh_id + List.length tx.outputs)
-      else None
-
 let add_final_state d observed_ids = function
   | None -> add_bool d false
   | Some utxo -> add_state (add_bool d true) observed_ids utxo
@@ -334,8 +321,17 @@ let record_block_case d case_index case =
       (TransitionExtraction.extract_valid_block_structural
          case.block_utxo case.block_txs case.block_height config case.block_fresh_id)
   in
+  let transition_result =
+    TransitionExtraction.extract_apply_block_transitions_structural
+      case.block_utxo case.block_txs case.block_height config case.block_fresh_id
+  in
+  let valid_result =
+    TransitionExtraction.extract_apply_valid_block_structural
+      case.block_utxo case.block_txs case.block_height config case.block_fresh_id
+  in
+  let d = add_final_state d case.block_observed_ids transition_result in
   add_final_state d case.block_observed_ids
-    (apply_block case.block_utxo case.block_txs case.block_height case.block_fresh_id)
+    valid_result
 
 let record_cost_case d case_index case =
   let d = add_byte d 0xB3 in
@@ -374,7 +370,7 @@ let () =
   Printf.printf "  \"block_case_count\": %d,\n" (List.length block_cases);
   Printf.printf "  \"cost_case_count\": %d,\n" (List.length cost_cases);
   Printf.printf "  \"projection\": \"coq_nat_outpoint_to_rust_initial_or_fresh_output_id\",\n";
-  Printf.printf "  \"observed_functions\": [\"valid_tx_structural\", \"delta_tx\", \"valid_block_structural\", \"cost_tx\", \"check_block_cost\"],\n";
+  Printf.printf "  \"observed_functions\": [\"valid_tx_structural\", \"delta_tx\", \"apply_block_transitions_structural\", \"apply_valid_block_structural\", \"valid_block_structural\", \"cost_tx\", \"check_block_cost\"],\n";
   Printf.printf "  \"hash_mod_1000000007\": %d,\n" d.h1;
   Printf.printf "  \"hash_mod_1000000009\": %d\n" d.h2;
   Printf.printf "}\n"

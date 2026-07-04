@@ -18,7 +18,10 @@ use pq_witness_protocol::types::{
     Block, OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet,
 };
 use pq_witness_protocol::weight::{check_block_cost, cost_tx, weight_tx};
-use pq_witness_protocol::{compute_txid, delta_tx, valid_block, valid_tx};
+use pq_witness_protocol::{
+    apply_block_transitions, compute_txid, delta_tx, valid_block, valid_tx,
+    validate_and_apply_block,
+};
 
 const MODULUS_1: u64 = 1_000_000_007;
 const MODULUS_2: u64 = 1_000_000_009;
@@ -530,22 +533,6 @@ fn build_block_case(case: &BlockCase) -> (UtxoSet, OutpointProjection, Block) {
     (utxo, projection, block)
 }
 
-fn apply_block(
-    utxo: &UtxoSet,
-    block: &Block,
-    height: u64,
-    config: &MigrationConfig,
-) -> Option<UtxoSet> {
-    let mut current = utxo.clone();
-    for tx in block {
-        if !valid_tx(&current, tx, height, config) {
-            return None;
-        }
-        delta_tx(&mut current, tx);
-    }
-    Some(current)
-}
-
 fn record_tx_case(mut digest: Digest, case_index: usize, case: &TxCase) -> Digest {
     let config = config();
     let (utxo, mut projection) = build_initial_utxo(&case.utxo);
@@ -585,12 +572,22 @@ fn record_block_case(mut digest: Digest, case_index: usize, case: &BlockCase) ->
     digest = digest.add_u64(case.fresh_id);
     digest = digest.add_state(&case.observed_ids, &projection, &utxo);
 
-    let transition_result = apply_block(&utxo, &block, case.height, &config);
+    let transition_result = apply_block_transitions(&utxo, &block, case.height, &config);
+    let valid_result = validate_and_apply_block(&utxo, &block, case.height, &config);
     digest = digest.add_bool(transition_result.is_some());
     digest = digest.add_bool(check_block_cost(&block));
     digest = digest.add_bool(valid_block(&utxo, &block, case.height, &config));
 
-    match transition_result {
+    digest = match transition_result {
+        None => digest.add_bool(false),
+        Some(final_utxo) => {
+            digest
+                .add_bool(true)
+                .add_state(&case.observed_ids, &projection, &final_utxo)
+        }
+    };
+
+    match valid_result {
         None => digest.add_bool(false),
         Some(final_utxo) => {
             digest
@@ -649,7 +646,7 @@ fn main() {
     println!("  \"cost_case_count\": {},", cost_cases.len());
     println!("  \"projection\": \"coq_nat_outpoint_to_rust_initial_or_fresh_output_id\",");
     println!(
-        "  \"observed_functions\": [\"valid_tx_structural\", \"delta_tx\", \"valid_block_structural\", \"cost_tx\", \"check_block_cost\"],"
+        "  \"observed_functions\": [\"valid_tx_structural\", \"delta_tx\", \"apply_block_transitions_structural\", \"apply_valid_block_structural\", \"valid_block_structural\", \"cost_tx\", \"check_block_cost\"],"
     );
     println!("  \"hash_mod_1000000007\": {},", digest.h1);
     println!("  \"hash_mod_1000000009\": {}", digest.h2);

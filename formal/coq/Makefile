@@ -75,7 +75,7 @@ verify: all
 	@echo "PO-2 (Determinism):       VERIFIED (SpendPredPQ.vo)"
 	@echo "PO-3 (Parse Canonicality): VERIFIED (SpendPredPQ.vo)"
 	@echo "PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.vo + Rust PBT)"
-	@echo "PO-5 (Transition Det.):    VERIFIED MODEL (UTXOTransitions.vo); txid/transition extraction refinement via build_extraction.sh"
+	@echo "PO-5 (Transition Det.):    VERIFIED MODEL (UTXOTransitions.vo); txid/transition/final-state extraction refinement via build_extraction.sh"
 	@echo "PO-7 (Cost Boundedness):   VERIFIED (UTXOTransitions.vo)"
 	@echo "PO-8 (Correspondence):     BOUNDED EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT"
 

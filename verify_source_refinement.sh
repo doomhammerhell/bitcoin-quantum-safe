@@ -20,7 +20,7 @@ if [[ -z "${KANI_HOME:-}" ]]; then
   fi
 fi
 
-echo "Running Kani source-level bounded refinement harnesses (PO-8 witness parser + PO-5 transition functions)"
+echo "Running Kani source-level bounded refinement harnesses (PO-8 witness parser + PO-5 transition/final-state functions)"
 
 if (($# > 0)); then
   cargo kani --output-format terse --default-unwind 16 "$@"
@@ -48,6 +48,8 @@ harnesses=(
   valid_block_source_accepts_sequential_dependency
   valid_block_source_rejects_invalid_first_transaction
   valid_block_source_rejects_intrablock_double_spend
+  apply_block_transitions_source_returns_final_state_for_legacy_dependency
+  validate_and_apply_block_source_matches_valid_block_projection
 )
 
 for harness in "${harnesses[@]}"; do

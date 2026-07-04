@@ -331,6 +331,51 @@ pub fn compute_txid(tx: &Transaction) -> [u8; 32] {
     txid
 }
 
+/// Apply block transactions sequentially and return the resulting UTXO set.
+///
+/// This is the operational state transformer corresponding to the structural
+/// Coq function `apply_block_transitions_structural`: every transaction is
+/// validated against the evolving local UTXO set before its transition is
+/// applied. The caller's UTXO set is never mutated.
+pub fn apply_block_transitions(
+    utxo_set: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> Option<UtxoSet> {
+    let mut local_utxo = utxo_set.clone();
+
+    for tx in block {
+        if !valid_tx(&local_utxo, tx, height, config) {
+            return None;
+        }
+        delta_tx(&mut local_utxo, tx);
+    }
+
+    Some(local_utxo)
+}
+
+/// Validate a block and return the final UTXO set when it is accepted.
+///
+/// This function is the operational counterpart of `valid_block`: acceptance is
+/// equivalent to returning `Some(final_utxo)`. Keeping the final state explicit
+/// makes PO-5 refinement check the state transition itself, not only the
+/// accept/reject bit.
+pub fn validate_and_apply_block(
+    utxo_set: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> Option<UtxoSet> {
+    let final_utxo = apply_block_transitions(utxo_set, block, height, config)?;
+
+    if !check_block_cost(block) {
+        return None;
+    }
+
+    Some(final_utxo)
+}
+
 /// Validate a block against the UTXO set and consensus rules.
 ///
 /// Implements the `ValidBlk(U, B)` predicate from the design document:
@@ -350,25 +395,7 @@ pub fn valid_block(
     height: u64,
     config: &MigrationConfig,
 ) -> bool {
-    // Step 1: Clone the UTXO set for local mutation
-    let mut local_utxo = utxo_set.clone();
-
-    // Step 2: Validate and apply each transaction sequentially
-    for tx in block {
-        // Step 2a: Validate
-        if !valid_tx(&local_utxo, tx, height, config) {
-            return false;
-        }
-        // Step 2b: Apply state transition
-        delta_tx(&mut local_utxo, tx);
-    }
-
-    // Step 3: Check block cost invariant
-    if !check_block_cost(block) {
-        return false;
-    }
-
-    true
+    validate_and_apply_block(utxo_set, block, height, config).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -872,6 +899,86 @@ mod validation_tests {
         let block = vec![tx1, tx2];
         // Pre-activation: legacy spends and outputs allowed, no PQ witness needed
         assert!(valid_block(&utxo_set, &block, 50_000, &config));
+    }
+
+    #[test]
+    fn apply_block_transitions_returns_final_utxo_for_legacy_dependency() {
+        let config = test_config();
+        let root = outpoint(1);
+        let mut utxo_set = UtxoSet::new();
+        utxo_set.insert(root.clone(), legacy_utxo_output(100_000));
+
+        let tx1 = Transaction {
+            version: 2,
+            inputs: vec![tx_input(root.clone())],
+            outputs: vec![TxOutput {
+                script_version: 0,
+                commitment: [0xDD; 32],
+                value: 100_000,
+            }],
+            locktime: 0,
+        };
+        let tx1_output = OutPoint {
+            txid: compute_txid(&tx1),
+            vout: 0,
+        };
+        let tx2 = Transaction {
+            version: 2,
+            inputs: vec![tx_input(tx1_output.clone())],
+            outputs: vec![TxOutput {
+                script_version: 0,
+                commitment: [0xEE; 32],
+                value: 90_000,
+            }],
+            locktime: 0,
+        };
+        let tx2_output = OutPoint {
+            txid: compute_txid(&tx2),
+            vout: 0,
+        };
+        let block = vec![tx1, tx2];
+
+        let final_utxo = apply_block_transitions(&utxo_set, &block, 50_000, &config)
+            .expect("sequential legacy dependency should be applied");
+
+        assert!(!final_utxo.contains_key(&root));
+        assert!(!final_utxo.contains_key(&tx1_output));
+        let output = final_utxo
+            .get(&tx2_output)
+            .expect("second transaction output should exist");
+        assert_eq!(output.script_version, 0);
+        assert_eq!(output.value, 90_000);
+        assert!(utxo_set.contains_key(&root));
+    }
+
+    #[test]
+    fn validate_and_apply_block_is_valid_block_with_final_state() {
+        let config = test_config();
+        let op = outpoint(1);
+        let mut utxo_set = UtxoSet::new();
+        utxo_set.insert(op.clone(), legacy_utxo_output(50_000));
+
+        let valid = vec![Transaction {
+            version: 2,
+            inputs: vec![tx_input(op.clone())],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 0,
+        }];
+        assert_eq!(
+            validate_and_apply_block(&utxo_set, &valid, 50_000, &config).is_some(),
+            valid_block(&utxo_set, &valid, 50_000, &config)
+        );
+
+        let invalid = vec![Transaction {
+            version: 2,
+            inputs: vec![tx_input(outpoint(99))],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 0,
+        }];
+        assert_eq!(
+            validate_and_apply_block(&utxo_set, &invalid, 50_000, &config).is_some(),
+            valid_block(&utxo_set, &invalid, 50_000, &config)
+        );
     }
 
     #[test]

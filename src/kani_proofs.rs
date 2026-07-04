@@ -15,8 +15,8 @@ use crate::encoding::{
 use crate::params::{MigrationConfig, MAX_WITNESS_SIZE};
 use crate::types::{OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet};
 use crate::{
-    compute_txid, delta_tx, delta_tx_insert_created_outputs, delta_tx_remove_spent_outputs,
-    valid_block, valid_tx,
+    apply_block_transitions, compute_txid, delta_tx, delta_tx_insert_created_outputs,
+    delta_tx_remove_spent_outputs, valid_block, valid_tx, validate_and_apply_block,
 };
 
 const SOURCE_PROOF_MAX_WITNESS_LEN: usize = 5;
@@ -412,4 +412,55 @@ fn valid_block_source_rejects_intrablock_double_spend() {
     let block = vec![tx1, tx2];
 
     assert!(!valid_block(&utxo, &block, 50, &transition_config()));
+}
+
+#[kani::proof]
+#[kani::unwind(160)]
+fn apply_block_transitions_source_returns_final_state_for_legacy_dependency() {
+    let root = transition_outpoint(15);
+    let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 2));
+    let tx1 = transition_tx(
+        vec![transition_tx_input(root.clone())],
+        vec![transition_tx_output(0, 2)],
+    );
+    let tx1_out = OutPoint {
+        txid: compute_txid(&tx1),
+        vout: 0,
+    };
+    let tx2 = transition_tx(
+        vec![transition_tx_input(tx1_out.clone())],
+        vec![transition_tx_output(2, 1)],
+    );
+    let tx2_out = OutPoint {
+        txid: compute_txid(&tx2),
+        vout: 0,
+    };
+    let block = vec![tx1, tx2];
+
+    match apply_block_transitions(&utxo, &block, 50, &transition_config()) {
+        Some(final_utxo) => {
+            assert!(!final_utxo.contains_key(&root));
+            assert!(!final_utxo.contains_key(&tx1_out));
+            assert_utxo_output(&final_utxo, &tx2_out, 2, 1);
+            assert_utxo_output(&utxo, &root, 0, 2);
+        }
+        None => unreachable!(),
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(160)]
+fn validate_and_apply_block_source_matches_valid_block_projection() {
+    let root = transition_outpoint(16);
+    let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 1));
+    let tx = transition_tx(
+        vec![transition_tx_input(root)],
+        vec![transition_tx_output(2, 1)],
+    );
+    let block = vec![tx];
+
+    assert_eq!(
+        validate_and_apply_block(&utxo, &block, 50, &transition_config()).is_some(),
+        valid_block(&utxo, &block, 50, &transition_config())
+    );
 }

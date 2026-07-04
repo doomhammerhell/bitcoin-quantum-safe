@@ -62,5 +62,8 @@ Definition extract_block_cost_structural := block_cost_structural.
 Definition extract_check_block_cost_structural := check_block_cost_structural.
 Definition extract_valid_block_transitions_structural := valid_block_transitions_structural.
 Definition extract_valid_block_structural := valid_block_structural.
+Definition extract_apply_block_transitions_structural := apply_block_transitions_structural.
+Definition extract_apply_valid_block_structural := apply_valid_block_structural.
+Definition extract_option_is_some {A : Type} := @option_is_some A.
 
 End TransitionExtraction.

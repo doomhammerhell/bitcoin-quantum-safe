@@ -381,10 +381,10 @@ jobs:
           print("=== SUCCESS: witness parser/serializer/consensus-domain/trace refinement summaries match ===")
           print("=== SUCCESS: sighash transcript refinement summaries match ===")
           print("=== SUCCESS: txid preimage refinement summaries match ===")
-          print("=== SUCCESS: UTXO transition refinement summaries match ===")
+          print("=== SUCCESS: UTXO transition/final-state refinement summaries match ===")
           print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
           print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
-          print("PO-5: Coq txid/UTXO transition model ↔ Rust implementation extraction-boundary evidence")
+          print("PO-5: Coq txid/UTXO transition/final-state model ↔ Rust implementation extraction-boundary evidence")
           EOF
 
   # Job 4: Run Coq proofs
@@ -689,12 +689,12 @@ jobs:
           echo "✓ Witness parser/serializer/consensus-domain/trace refinement matrix + symbolic state-space Coq vs Rust: COMPLETED"
           echo "✓ Sighash transcript refinement Coq vs Rust: COMPLETED"
           echo "✓ Txid preimage refinement Coq vs Rust: COMPLETED"
-          echo "✓ UTXO transition refinement Coq vs Rust: COMPLETED"
-          echo "✓ Rust source-level bounded parser and PO-5 transition refinement harnesses (Kani): VERIFIED"
+          echo "✓ UTXO transition/final-state refinement Coq vs Rust: COMPLETED"
+          echo "✓ Rust source-level bounded parser and PO-5 transition/final-state refinement harnesses (Kani): VERIFIED"
           echo "✓ Compiled release artifact translation validation: VERIFIED"
           echo "✓ Compiled sighash transcript artifact validation: VERIFIED"
           echo "✓ Compiled txid preimage artifact validation: VERIFIED"
-          echo "✓ Compiled UTXO transition artifact validation: VERIFIED"
+          echo "✓ Compiled UTXO transition/final-state artifact validation: VERIFIED"
           echo "✓ Compiled runtime txid/store refinement artifact validation: VERIFIED"
           echo "✓ Bounded golden vector generation: COMPLETED"
           echo "✓ Coq-extracted serializer vs Rust comparison: COMPLETED"
@@ -702,5 +702,5 @@ jobs:
           echo "✓ Performance benchmarks: COMPLETED"
           echo ""
           echo "PO-4: Coq sighash model and Rust transcript serialization refinement are validated over the modeled matrix; SHA-256 and compiler correctness remain explicit boundaries"
-          echo "PO-5: Coq txid preimage and UTXO transition models are validated against Rust over deterministic structural matrices, with additional Kani bounded valid_tx/delta_tx/valid_block transition evidence and release runtime txid/store refinement evidence; the selected unbounded path is Coq-first verified/extracted transition core plus thin Rust adapters, while SHA-256 primitive correctness, UtxoStore backend internals, PQ witness cryptographic verification, and compiler correctness remain explicit boundaries"
+          echo "PO-5: Coq txid preimage and UTXO transition/final-state models are validated against Rust over deterministic structural matrices, with additional Kani bounded valid_tx/delta_tx/valid_block/block-application transition evidence and release runtime txid/store refinement evidence; the selected unbounded path is Coq-first verified/extracted transition core plus thin Rust adapters, while SHA-256 primitive correctness, UtxoStore backend internals, PQ witness cryptographic verification, and compiler correctness remain explicit boundaries"
           echo "PO-8: Coq concrete canonicality, extraction refinement, Rust source-level bounded parser refinement, and compiled-artifact translation validation are complete; full compiler correctness remains outside current artifact boundary"

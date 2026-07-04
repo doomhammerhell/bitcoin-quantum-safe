@@ -29,7 +29,7 @@ require_file() {
   exit 1
 }
 
-COQ_TRANSITION="$(require_file "formal/coq/extraction/coq_transition_refinement.json" "coq_transition_refinement.json" "Coq transition refinement summary")"
+COQ_TRANSITION="$(require_file "formal/coq/extraction/coq_transition_refinement.json" "coq_transition_refinement.json" "Coq transition/final-state refinement summary")"
 RUST_TRANSITION="$OUT_DIR/rust_transition_refinement.release.json"
 CERTIFICATE="$OUT_DIR/transition_refinement_certificate.json"
 
@@ -97,9 +97,9 @@ release_binary = "target/release/examples/generate_transition_refinement"
 generated_output = Path(rust_transition_path).relative_to(root)
 
 certificate = {
-    "validation": "PO-5 UTXO transition refinement validation",
+    "validation": "PO-5 UTXO transition/final-state refinement validation",
     "scope": {
-        "claim": "release binary produces the same transition refinement summary as the Coq-extracted structural UTXO transition model over the deterministic projection matrix",
+        "claim": "release binary produces the same accept/reject and projected-final-state transition refinement summary as the Coq-extracted structural UTXO transition model over the deterministic projection matrix",
         "non_claim": "this is not a proof of SHA-256 txid collision resistance, UTXO-store backend internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "projection": {
@@ -122,6 +122,6 @@ with open(certificate_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print("=== SUCCESS ===")
-print("Compiled transition refinement binary matches Coq-extracted UTXO transition artifact.")
+print("Compiled transition refinement binary matches Coq-extracted UTXO transition/final-state artifact.")
 print(f"Certificate: {certificate_path}")
 PY

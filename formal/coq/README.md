@@ -9,8 +9,8 @@ Rust preimage serialization path. PO-5 now includes a mechanized
 `txid_preimage` transcript with structural injectivity over the committed
 txid shape, Coq-extracted txid/transition summaries compared against Rust
 transaction/block transition functions, plus Kani bounded source-level
-harnesses for deployed `valid_tx`, `delta_tx`, and `valid_block` transition
-behavior. The runtime layer also validates txid preimage/hash wiring and
+harnesses for deployed `valid_tx`, `delta_tx`, `valid_block`, and
+block-application final-state behavior. The runtime layer also validates txid preimage/hash wiring and
 UTXO-store extensional behavior against independent deterministic references.
 Rust property-based tests, Kani
 source-level bounded harnesses, and release-binary validation provide executable
@@ -79,6 +79,9 @@ modeled transcript layout.
 | `delta_tx_preserves_no_double_spend` | PO-5 | No-double-spend preservation |
 | `valid_tx_structural` | PO-5 evidence | Extractable structural transaction validator mirroring duplicate-input, missing-input, value-conservation, migration, and freeze checks |
 | `valid_block_structural` | PO-5 evidence | Extractable structural block validator with sequential transition and block-cost checks |
+| `apply_block_transitions_structural_equiv` | PO-5 evidence | Equivalence between sequential structural block-transition application and the transition-validity boolean |
+| `apply_valid_block_structural_equiv` | PO-5 evidence | Equivalence between optional final-state block application and `valid_block_structural` |
+| `apply_valid_block_structural_some_iff_valid` | PO-5 evidence | `Some final_utxo` exists exactly when structural block validation accepts |
 | `cost_bounded_by_weight` | PO-7 | Cost bounded by transaction weight |
 | `cost_equals_weight` | PO-7 | Exact equality for the modeled weight function |
 | `block_cost_bounded_by_weights` | PO-7 | Block-level cost bound |
@@ -93,16 +96,19 @@ not full `Transaction`, because witness bytes are not part of txid computation.
 `extraction/transition_refinement.ml` expose and summarize structural transition
 functions. The Rust counterpart
 `../../examples/generate_transition_refinement.rs` calls `valid_tx`, `delta_tx`,
-`valid_block`, `check_migration_rules`, `check_no_frozen_inputs`, `cost_tx`,
-`weight_tx`, and `check_block_cost` over the same projected matrix. The matrix
+`apply_block_transitions`, `validate_and_apply_block`, `valid_block`,
+`check_migration_rules`, `check_no_frozen_inputs`, `cost_tx`, `weight_tx`, and
+`check_block_cost` over the same projected matrix. The matrix
 covers missing inputs, duplicate inputs, value inflation, frozen legacy/taproot
 spends at cutover, legacy output creation after activation, mixed inputs,
 fee-preserving multi-input transactions, sequential intra-block dependencies,
-intra-block double spends, and exact/over-limit block-cost boundaries.
-`../../src/kani_proofs.rs` adds fifteen bounded source-level PO-5 harnesses
+intra-block double spends, projected final UTXO states, and exact/over-limit
+block-cost boundaries.
+`../../src/kani_proofs.rs` adds seventeen bounded source-level PO-5 harnesses
 over deployed Rust transition control flow: six `valid_tx` structural cases,
-five `delta_tx` removal/preservation/insertion/empty/full-spend-create cases, and four
-`valid_block` empty/sequential/rejection cases. Under `cfg(kani)`, the UTXO map
+five `delta_tx` removal/preservation/insertion/empty/full-spend-create cases,
+four `valid_block` empty/sequential/rejection cases, and two block-application
+final-state/projection cases. Under `cfg(kani)`, the UTXO map
 is a deterministic fixed-capacity finite map and `compute_txid` is a bounded
 structural model so the verifier is not forced through OS-randomized hash
 seeding or SHA-256 internals. These harnesses complement the extracted matrix,
@@ -133,7 +139,7 @@ backend internals, or compiler/toolchain correctness.
 | Byte-for-byte verification | Coq-extracted serializer harness matches Rust generator |
 | Consensus witness-size guard | `max_witness_size = 16000 <= max_u16`, plus parsed/serialized component length and bounded-canonicality theorems |
 | Consensus parser theorem | `parse_consensus_witness_concrete_*` proves that the consensus-domain parser equals the byte-level parser below the cap, rejects above the cap, and only accepts canonical modeled-domain witnesses |
-| Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 15 PO-5 harnesses verify bounded deployed `valid_tx`, `delta_tx`, and `valid_block` transition behavior |
+| Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 17 PO-5 harnesses verify bounded deployed `valid_tx`, `delta_tx`, `valid_block`, and block-application transition behavior |
 | Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
 | Full CompactSize coverage | Rust implements/tests `0xFE` and `0xFF`; not yet modeled in Coq |
 | Compiler correctness | Not proved |
@@ -184,8 +190,8 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   consensus transition semantics. The current transition refinement covers
   structural transaction/block semantics over deterministic edge-case matrices,
   validates txid and transition release binaries against Coq-extracted
-  summaries, checks bounded deployed `valid_tx`, `delta_tx`, and `valid_block`
-  behavior with Kani, and validates runtime txid/store behavior against
+  summaries, checks bounded deployed `valid_tx`, `delta_tx`, `valid_block`, and
+  block-application behavior with Kani, and validates runtime txid/store behavior against
   independent deterministic references; it does not prove SHA-256 primitive
   correctness/collision resistance, PQ witness cryptographic verification, or
   compiler/toolchain correctness.
