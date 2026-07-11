@@ -112,6 +112,14 @@ let tx_cases =
       tx_observed_ids = [ 2; 110 ];
     };
     {
+      tx_name = "structural-pq-spend-boundary";
+      tx_height = 50;
+      tx_utxo = [ (13, output 2 50_000) ];
+      tx_body = tx [ 13 ] [ tx_output 2 50_000 ];
+      tx_fresh_id = 210;
+      tx_observed_ids = [ 13; 210 ];
+    };
+    {
       tx_name = "missing-input";
       tx_height = 50;
       tx_utxo = [];
@@ -211,6 +219,14 @@ let block_cases =
       block_txs = [ tx [ 20 ] [ tx_output 2 50 ] ];
       block_fresh_id = 310;
       block_observed_ids = [ 20; 310 ];
+    };
+    {
+      block_name = "structural-pq-spend-block-boundary";
+      block_height = 50;
+      block_utxo = [ (23, output 2 50) ];
+      block_txs = [ tx [ 23 ] [ tx_output 2 50 ] ];
+      block_fresh_id = 350;
+      block_observed_ids = [ 23; 350 ];
     };
     {
       block_name = "invalid-missing-input-block";

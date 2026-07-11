@@ -274,10 +274,10 @@ print("Exhaustive u16 varint refinement summaries match!")
 print("Witness parser/serializer/consensus-domain/trace refinement summaries match!")
 print("Sighash transcript refinement summaries match!")
 print("Txid preimage refinement summaries match!")
-print("UTXO transition/final-state refinement summaries match!")
+print("UTXO structural transition/final-state refinement summaries match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
-print("PO-5: Coq txid/UTXO transition/final-state model ↔ Rust implementation extraction-boundary evidence")
+print("PO-5: Coq txid/UTXO structural transition/final-state model ↔ Rust structural entrypoint extraction-boundary evidence")
 PYEOF
 
 echo ""
@@ -307,7 +307,7 @@ echo "  PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.v + Rust PBT)"
 echo "  PO-4 (Rust transcript):     COQ-EXTRACTED VS RUST PREIMAGE SERIALIZATION REFINEMENT"
 echo "  PO-4 (Compiled artifact):   RUN ./verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
 echo "  PO-5 (Txid preimage):      COQ-EXTRACTED VS RUST TXID PREIMAGE REFINEMENT"
-echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST TRANSITION/FINAL-STATE REFINEMENT EVIDENCE"
+echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST STRUCTURAL TRANSITION/FINAL-STATE REFINEMENT EVIDENCE"
 echo "  PO-5 (Txid compiled):      RUN ./verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
 echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION/FINAL-STATE VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"

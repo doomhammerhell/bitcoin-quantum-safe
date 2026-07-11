@@ -89,64 +89,62 @@ use crate::types::{OutPoint, Output};
 
 const TXID_PREIMAGE_DOMAIN: &[u8] = b"BitcoinPQ:txid:v1";
 
-/// Validate a transaction against the UTXO set and consensus rules.
-///
-/// Implements the `ValidTx(U, tx)` predicate from the design document.
-/// Validation steps (in order):
-///
-/// 1. **No duplicate inputs:** reject if any outpoint appears more than once
-///    in `tx.inputs`.
-/// 2. **All inputs exist:** every input's outpoint must be present in the
-///    UTXO set.
-/// 3. **Value conservation:** the sum of input values (looked up from the
-///    UTXO set) must be ≥ the sum of output values.
-/// 4. **Migration rules:** `check_migration_rules(height, tx, utxo_set, config)`
-///    must pass (phase-dependent output/spend restrictions).
-/// 5. **Freeze check:** `check_no_frozen_inputs(height, tx, utxo_set, config)`
-///    must pass (no spending of frozen legacy outputs after cutover).
-/// 6. **Witness validation:** for each input spending a v2 (PQ) output,
-///    compute the sighash and verify `SpendPred_PQ(commitment, sighash, witness)`.
-///    Inputs spending non-v2 outputs are assumed valid (legacy validation is
-///    outside the scope of this PQ protocol model).
-///
-/// # Requirements: 9.1, 9.2, 9.3
-pub fn valid_tx(
-    utxo_set: &UtxoSet,
-    tx: &Transaction,
-    height: u64,
-    config: &MigrationConfig,
-) -> bool {
-    // Step 1: No duplicate inputs
+fn has_duplicate_inputs(tx: &Transaction) -> bool {
     #[cfg(not(kani))]
     {
         let mut seen = HashSet::with_capacity(tx.inputs.len());
         for input in &tx.inputs {
             if !seen.insert(&input.outpoint) {
-                return false;
+                return true;
             }
         }
+        false
     }
     #[cfg(kani)]
     {
         for i in 0..tx.inputs.len() {
             for j in (i + 1)..tx.inputs.len() {
                 if tx.inputs[i].outpoint == tx.inputs[j].outpoint {
-                    return false;
+                    return true;
                 }
             }
         }
+        false
+    }
+}
+
+fn collect_input_outputs<'a>(utxo_set: &'a UtxoSet, tx: &Transaction) -> Option<Vec<&'a Output>> {
+    let mut outputs = Vec::with_capacity(tx.inputs.len());
+    for input in &tx.inputs {
+        outputs.push(utxo_set.get(&input.outpoint)?);
+    }
+    Some(outputs)
+}
+
+/// Validate the structural UTXO-transition portion of a transaction.
+///
+/// This is the Rust counterpart of the Coq `valid_tx_structural` predicate.
+/// It checks duplicate inputs, input existence, value conservation,
+/// migration-phase restrictions, and freeze rules. It deliberately does not
+/// perform PQ witness cryptographic validation; that boundary is handled by
+/// `valid_tx` and the PO-8/spend-predicate artifacts.
+///
+/// # Requirements: 9.1, 9.2, 9.3
+pub fn valid_tx_structural(
+    utxo_set: &UtxoSet,
+    tx: &Transaction,
+    height: u64,
+    config: &MigrationConfig,
+) -> bool {
+    // Step 1: No duplicate inputs
+    if has_duplicate_inputs(tx) {
+        return false;
     }
 
     // Step 2: All inputs exist in the UTXO set
-    let input_outputs: Vec<&Output> = {
-        let mut outputs = Vec::with_capacity(tx.inputs.len());
-        for input in &tx.inputs {
-            match utxo_set.get(&input.outpoint) {
-                Some(output) => outputs.push(output),
-                None => return false,
-            }
-        }
-        outputs
+    let input_outputs = match collect_input_outputs(utxo_set, tx) {
+        Some(outputs) => outputs,
+        None => return false,
     };
 
     // Step 3: Value conservation — sum(input values) >= sum(output values)
@@ -168,9 +166,15 @@ pub fn valid_tx(
         return false;
     }
 
+    true
+}
+
+fn validate_pq_witnesses(utxo_set: &UtxoSet, tx: &Transaction) -> bool {
     // Step 6: Witness validation for v2 (PQ) inputs
     for (i, input) in tx.inputs.iter().enumerate() {
-        let spent_output = input_outputs[i];
+        let Some(spent_output) = utxo_set.get(&input.outpoint) else {
+            return false;
+        };
         if spent_output.script_version == 2 {
             let sighash = sighash_v2(tx, i, spent_output);
             if !spend_pred_pq(&spent_output.commitment, &sighash, &input.witness) {
@@ -182,6 +186,23 @@ pub fn valid_tx(
     }
 
     true
+}
+
+/// Validate a transaction against the UTXO set and consensus rules.
+///
+/// Implements the full Rust `ValidTx(U, tx)` predicate from the design
+/// document. This extends `valid_tx_structural` with PQ witness validation for
+/// v2 outputs. Inputs spending non-v2 outputs are assumed valid here because
+/// legacy script validation is outside the scope of this PQ protocol model.
+///
+/// # Requirements: 9.1, 9.2, 9.3
+pub fn valid_tx(
+    utxo_set: &UtxoSet,
+    tx: &Transaction,
+    height: u64,
+    config: &MigrationConfig,
+) -> bool {
+    valid_tx_structural(utxo_set, tx, height, config) && validate_pq_witnesses(utxo_set, tx)
 }
 
 /// Apply a transaction to the UTXO set: remove spent outpoints, add new ones.
@@ -331,12 +352,66 @@ pub fn compute_txid(tx: &Transaction) -> [u8; 32] {
     txid
 }
 
+/// Apply block transactions sequentially using only structural validation.
+///
+/// This is the Rust operational counterpart of the Coq function
+/// `apply_block_transitions_structural`. It intentionally stops before
+/// cryptographic PQ witness validation, so it is suitable for PO-5 transition
+/// refinement but not for full consensus acceptance.
+pub fn apply_block_transitions_structural(
+    utxo_set: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> Option<UtxoSet> {
+    let mut local_utxo = utxo_set.clone();
+
+    for tx in block {
+        if !valid_tx_structural(&local_utxo, tx, height, config) {
+            return None;
+        }
+        delta_tx(&mut local_utxo, tx);
+    }
+
+    Some(local_utxo)
+}
+
+/// Structurally validate a block and return the final UTXO set when accepted.
+///
+/// This mirrors Coq `apply_valid_block_structural`: transition application is
+/// checked first, then the block-cost invariant. It is intentionally distinct
+/// from the full consensus path because it does not verify PQ witnesses.
+pub fn validate_and_apply_block_structural(
+    utxo_set: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> Option<UtxoSet> {
+    let final_utxo = apply_block_transitions_structural(utxo_set, block, height, config)?;
+
+    if !check_block_cost(block) {
+        return None;
+    }
+
+    Some(final_utxo)
+}
+
+/// Boolean projection of `validate_and_apply_block_structural`.
+pub fn valid_block_structural(
+    utxo_set: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> bool {
+    validate_and_apply_block_structural(utxo_set, block, height, config).is_some()
+}
+
 /// Apply block transactions sequentially and return the resulting UTXO set.
 ///
-/// This is the operational state transformer corresponding to the structural
-/// Coq function `apply_block_transitions_structural`: every transaction is
-/// validated against the evolving local UTXO set before its transition is
-/// applied. The caller's UTXO set is never mutated.
+/// This is the full operational state transformer: every transaction is
+/// validated against the evolving local UTXO set with `valid_tx`, including PQ
+/// witness validation for v2 outputs, before its transition is applied. The
+/// caller's UTXO set is never mutated.
 pub fn apply_block_transitions(
     utxo_set: &UtxoSet,
     block: &Block,
@@ -359,7 +434,7 @@ pub fn apply_block_transitions(
 ///
 /// This function is the operational counterpart of `valid_block`: acceptance is
 /// equivalent to returning `Some(final_utxo)`. Keeping the final state explicit
-/// makes PO-5 refinement check the state transition itself, not only the
+/// makes PO-5/PO-8 integration check the state transition itself, not only the
 /// accept/reject bit.
 pub fn validate_and_apply_block(
     utxo_set: &UtxoSet,
@@ -424,6 +499,15 @@ mod validation_tests {
         Output {
             script_version: 0,
             commitment: [0xBB; 32],
+            value,
+        }
+    }
+
+    /// Helper: create a PQ (v2) output for the UTXO set.
+    fn pq_utxo_output(value: u64) -> Output {
+        Output {
+            script_version: 2,
+            commitment: [0xCC; 32],
             value,
         }
     }
@@ -610,6 +694,46 @@ mod validation_tests {
 
         // Empty transaction: no inputs to check, value conservation holds (0 >= 0)
         assert!(valid_tx(&utxo_set, &tx, 50_000, &config));
+    }
+
+    #[test]
+    fn valid_tx_structural_accepts_pq_spend_boundary_while_full_requires_witness() {
+        let config = test_config();
+        let op = outpoint(2);
+        let mut utxo_set = UtxoSet::new();
+        utxo_set.insert(op.clone(), pq_utxo_output(50_000));
+
+        let tx = Transaction {
+            version: 2,
+            inputs: vec![tx_input(op)],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 0,
+        };
+
+        assert!(valid_tx_structural(&utxo_set, &tx, 50_000, &config));
+        assert!(!valid_tx(&utxo_set, &tx, 50_000, &config));
+    }
+
+    #[test]
+    fn block_structural_application_accepts_pq_boundary_while_full_rejects() {
+        let config = test_config();
+        let op = outpoint(3);
+        let mut utxo_set = UtxoSet::new();
+        utxo_set.insert(op.clone(), pq_utxo_output(50_000));
+
+        let tx = Transaction {
+            version: 2,
+            inputs: vec![tx_input(op.clone())],
+            outputs: vec![pq_tx_output(50_000)],
+            locktime: 0,
+        };
+        let block = vec![tx];
+
+        assert!(validate_and_apply_block_structural(&utxo_set, &block, 50_000, &config).is_some());
+        assert!(valid_block_structural(&utxo_set, &block, 50_000, &config));
+        assert!(validate_and_apply_block(&utxo_set, &block, 50_000, &config).is_none());
+        assert!(!valid_block(&utxo_set, &block, 50_000, &config));
+        assert!(utxo_set.contains_key(&op));
     }
 
     // -----------------------------------------------------------------------

@@ -99,7 +99,7 @@ generated_output = Path(rust_transition_path).relative_to(root)
 certificate = {
     "validation": "PO-5 UTXO transition/final-state refinement validation",
     "scope": {
-        "claim": "release binary produces the same accept/reject and projected-final-state transition refinement summary as the Coq-extracted structural UTXO transition model over the deterministic projection matrix",
+        "claim": "release binary observing Rust structural entrypoints produces the same accept/reject and projected-final-state transition refinement summary as the Coq-extracted structural UTXO transition model over the deterministic projection matrix",
         "non_claim": "this is not a proof of SHA-256 txid collision resistance, UTXO-store backend internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "projection": {

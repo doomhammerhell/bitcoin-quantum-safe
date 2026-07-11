@@ -4,8 +4,9 @@
 //! spaces. The witness harnesses complement the unbounded Coq theorems in
 //! `formal/coq/VarintConcrete.v`. The transition harnesses complement the
 //! Coq-extracted PO-5 refinement matrix by checking bounded source-level
-//! `valid_tx`, `delta_tx`, and `valid_block` transition behavior before reaching
-//! cryptographic PQ witness validation.
+//! `valid_tx_structural`, `delta_tx`, `valid_block_structural`, and structural
+//! block-application behavior before reaching cryptographic PQ witness
+//! validation.
 
 use crate::encoding::{
     is_canonical_consensus_witness, is_canonical_witness, parse_consensus_witness,
@@ -15,8 +16,9 @@ use crate::encoding::{
 use crate::params::{MigrationConfig, MAX_WITNESS_SIZE};
 use crate::types::{OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet};
 use crate::{
-    apply_block_transitions, compute_txid, delta_tx, delta_tx_insert_created_outputs,
-    delta_tx_remove_spent_outputs, valid_block, valid_tx, validate_and_apply_block,
+    apply_block_transitions_structural, compute_txid, delta_tx, delta_tx_insert_created_outputs,
+    delta_tx_remove_spent_outputs, valid_block_structural, valid_tx_structural,
+    validate_and_apply_block_structural,
 };
 
 const SOURCE_PROOF_MAX_WITNESS_LEN: usize = 5;
@@ -207,16 +209,21 @@ fn assert_utxo_output(utxo: &UtxoSet, outpoint: &OutPoint, script_version: u8, v
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_rejects_missing_inputs() {
+fn valid_tx_structural_source_rejects_missing_inputs() {
     let missing = transition_outpoint(1);
     let tx = transition_tx(vec![transition_tx_input(missing)], vec![]);
 
-    assert!(!valid_tx(&UtxoSet::new(), &tx, 50, &transition_config()));
+    assert!(!valid_tx_structural(
+        &UtxoSet::new(),
+        &tx,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_rejects_duplicate_inputs() {
+fn valid_tx_structural_source_rejects_duplicate_inputs() {
     let outpoint = transition_outpoint(2);
     let tx = transition_tx(
         vec![
@@ -226,12 +233,17 @@ fn valid_tx_source_rejects_duplicate_inputs() {
         vec![],
     );
 
-    assert!(!valid_tx(&UtxoSet::new(), &tx, 50, &transition_config()));
+    assert!(!valid_tx_structural(
+        &UtxoSet::new(),
+        &tx,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_rejects_value_inflation() {
+fn valid_tx_structural_source_rejects_value_inflation() {
     let outpoint = transition_outpoint(3);
     let utxo = singleton_utxo(outpoint.clone(), transition_utxo_output(0, 1));
     let tx = transition_tx(
@@ -239,12 +251,12 @@ fn valid_tx_source_rejects_value_inflation() {
         vec![transition_tx_output(2, 2)],
     );
 
-    assert!(!valid_tx(&utxo, &tx, 50, &transition_config()));
+    assert!(!valid_tx_structural(&utxo, &tx, 50, &transition_config()));
 }
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_rejects_legacy_outputs_after_announcement() {
+fn valid_tx_structural_source_rejects_legacy_outputs_after_announcement() {
     let outpoint = transition_outpoint(4);
     let utxo = singleton_utxo(outpoint.clone(), transition_utxo_output(0, 1));
     let tx = transition_tx(
@@ -252,12 +264,12 @@ fn valid_tx_source_rejects_legacy_outputs_after_announcement() {
         vec![transition_tx_output(0, 1)],
     );
 
-    assert!(!valid_tx(&utxo, &tx, 100, &transition_config()));
+    assert!(!valid_tx_structural(&utxo, &tx, 100, &transition_config()));
 }
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_rejects_frozen_legacy_spends_at_cutover() {
+fn valid_tx_structural_source_rejects_frozen_legacy_spends_at_cutover() {
     let outpoint = transition_outpoint(5);
     let utxo = singleton_utxo(outpoint.clone(), transition_utxo_output(0, 1));
     let tx = transition_tx(
@@ -265,12 +277,12 @@ fn valid_tx_source_rejects_frozen_legacy_spends_at_cutover() {
         vec![transition_tx_output(2, 1)],
     );
 
-    assert!(!valid_tx(&utxo, &tx, 160, &transition_config()));
+    assert!(!valid_tx_structural(&utxo, &tx, 160, &transition_config()));
 }
 
 #[kani::proof]
 #[kani::unwind(64)]
-fn valid_tx_source_accepts_legacy_to_pq_during_grace() {
+fn valid_tx_structural_source_accepts_legacy_to_pq_during_grace() {
     let outpoint = transition_outpoint(6);
     let utxo = singleton_utxo(outpoint.clone(), transition_utxo_output(0, 1));
     let tx = transition_tx(
@@ -278,7 +290,20 @@ fn valid_tx_source_accepts_legacy_to_pq_during_grace() {
         vec![transition_tx_output(2, 1)],
     );
 
-    assert!(valid_tx(&utxo, &tx, 120, &transition_config()));
+    assert!(valid_tx_structural(&utxo, &tx, 120, &transition_config()));
+}
+
+#[kani::proof]
+#[kani::unwind(64)]
+fn valid_tx_structural_source_accepts_pq_spend_boundary() {
+    let outpoint = transition_outpoint(17);
+    let utxo = singleton_utxo(outpoint.clone(), transition_utxo_output(2, 1));
+    let tx = transition_tx(
+        vec![transition_tx_input(outpoint)],
+        vec![transition_tx_output(2, 1)],
+    );
+
+    assert!(valid_tx_structural(&utxo, &tx, 50, &transition_config()));
 }
 
 #[kani::proof]
@@ -353,16 +378,21 @@ fn delta_tx_source_spend_and_create_uses_modeled_txid() {
 
 #[kani::proof]
 #[kani::unwind(96)]
-fn valid_block_source_accepts_empty_block() {
+fn valid_block_structural_source_accepts_empty_block() {
     let utxo = UtxoSet::new();
     let block = Vec::new();
 
-    assert!(valid_block(&utxo, &block, 50, &transition_config()));
+    assert!(valid_block_structural(
+        &utxo,
+        &block,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(128)]
-fn valid_block_source_accepts_sequential_dependency() {
+fn valid_block_structural_source_accepts_sequential_dependency() {
     let root = transition_outpoint(13);
     let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 2));
     let tx1 = transition_tx(
@@ -379,12 +409,17 @@ fn valid_block_source_accepts_sequential_dependency() {
     );
     let block = vec![tx1, tx2];
 
-    assert!(valid_block(&utxo, &block, 50, &transition_config()));
+    assert!(valid_block_structural(
+        &utxo,
+        &block,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(128)]
-fn valid_block_source_rejects_invalid_first_transaction() {
+fn valid_block_structural_source_rejects_invalid_first_transaction() {
     let missing = transition_outpoint(13);
     let utxo = UtxoSet::new();
     let tx = transition_tx(
@@ -393,12 +428,17 @@ fn valid_block_source_rejects_invalid_first_transaction() {
     );
     let block = vec![tx];
 
-    assert!(!valid_block(&utxo, &block, 50, &transition_config()));
+    assert!(!valid_block_structural(
+        &utxo,
+        &block,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(128)]
-fn valid_block_source_rejects_intrablock_double_spend() {
+fn valid_block_structural_source_rejects_intrablock_double_spend() {
     let spent = transition_outpoint(14);
     let utxo = singleton_utxo(spent.clone(), transition_utxo_output(0, 2));
     let tx1 = transition_tx(
@@ -411,12 +451,17 @@ fn valid_block_source_rejects_intrablock_double_spend() {
     );
     let block = vec![tx1, tx2];
 
-    assert!(!valid_block(&utxo, &block, 50, &transition_config()));
+    assert!(!valid_block_structural(
+        &utxo,
+        &block,
+        50,
+        &transition_config()
+    ));
 }
 
 #[kani::proof]
 #[kani::unwind(160)]
-fn apply_block_transitions_source_returns_final_state_for_legacy_dependency() {
+fn apply_block_transitions_structural_source_returns_final_state_for_legacy_dependency() {
     let root = transition_outpoint(15);
     let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 2));
     let tx1 = transition_tx(
@@ -437,7 +482,7 @@ fn apply_block_transitions_source_returns_final_state_for_legacy_dependency() {
     };
     let block = vec![tx1, tx2];
 
-    match apply_block_transitions(&utxo, &block, 50, &transition_config()) {
+    match apply_block_transitions_structural(&utxo, &block, 50, &transition_config()) {
         Some(final_utxo) => {
             assert!(!final_utxo.contains_key(&root));
             assert!(!final_utxo.contains_key(&tx1_out));
@@ -450,7 +495,7 @@ fn apply_block_transitions_source_returns_final_state_for_legacy_dependency() {
 
 #[kani::proof]
 #[kani::unwind(160)]
-fn validate_and_apply_block_source_matches_valid_block_projection() {
+fn validate_and_apply_block_structural_source_matches_valid_block_projection() {
     let root = transition_outpoint(16);
     let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 1));
     let tx = transition_tx(
@@ -460,7 +505,31 @@ fn validate_and_apply_block_source_matches_valid_block_projection() {
     let block = vec![tx];
 
     assert_eq!(
-        validate_and_apply_block(&utxo, &block, 50, &transition_config()).is_some(),
-        valid_block(&utxo, &block, 50, &transition_config())
+        validate_and_apply_block_structural(&utxo, &block, 50, &transition_config()).is_some(),
+        valid_block_structural(&utxo, &block, 50, &transition_config())
     );
+}
+
+#[kani::proof]
+#[kani::unwind(160)]
+fn validate_and_apply_block_structural_source_accepts_pq_boundary() {
+    let root = transition_outpoint(18);
+    let utxo = singleton_utxo(root.clone(), transition_utxo_output(2, 1));
+    let tx = transition_tx(
+        vec![transition_tx_input(root.clone())],
+        vec![transition_tx_output(2, 1)],
+    );
+    let created = OutPoint {
+        txid: compute_txid(&tx),
+        vout: 0,
+    };
+    let block = vec![tx];
+
+    match validate_and_apply_block_structural(&utxo, &block, 50, &transition_config()) {
+        Some(final_utxo) => {
+            assert!(!final_utxo.contains_key(&root));
+            assert_utxo_output(&final_utxo, &created, 2, 1);
+        }
+        None => unreachable!(),
+    }
 }

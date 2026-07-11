@@ -19,8 +19,8 @@ use pq_witness_protocol::types::{
 };
 use pq_witness_protocol::weight::{check_block_cost, cost_tx, weight_tx};
 use pq_witness_protocol::{
-    apply_block_transitions, compute_txid, delta_tx, valid_block, valid_tx,
-    validate_and_apply_block,
+    apply_block_transitions_structural, compute_txid, delta_tx, valid_block_structural,
+    valid_tx_structural, validate_and_apply_block_structural,
 };
 
 const MODULUS_1: u64 = 1_000_000_007;
@@ -289,6 +289,15 @@ fn tx_cases() -> Vec<TxCase> {
             observed_ids: vec![2, 110],
         },
         TxCase {
+            name: "structural-pq-spend-boundary",
+            height: 50,
+            utxo: vec![(13, OutputShape::new(2, 50_000))],
+            inputs: vec![13],
+            outputs: vec![OutputShape::new(2, 50_000)],
+            fresh_id: 210,
+            observed_ids: vec![13, 210],
+        },
+        TxCase {
             name: "missing-input",
             height: 50,
             utxo: vec![],
@@ -392,6 +401,17 @@ fn block_cases() -> Vec<BlockCase> {
             }],
             fresh_id: 310,
             observed_ids: vec![20, 310],
+        },
+        BlockCase {
+            name: "structural-pq-spend-block-boundary",
+            height: 50,
+            utxo: vec![(23, OutputShape::new(2, 50))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![23],
+                outputs: vec![OutputShape::new(2, 50)],
+            }],
+            fresh_id: 350,
+            observed_ids: vec![23, 350],
         },
         BlockCase {
             name: "invalid-missing-input-block",
@@ -553,7 +573,7 @@ fn record_tx_case(mut digest: Digest, case_index: usize, case: &TxCase) -> Diges
     digest = digest.add_u64(sum_output_values(&tx));
     digest = digest.add_bool(check_migration_rules(case.height, &tx, &utxo, &config));
     digest = digest.add_bool(check_no_frozen_inputs(case.height, &tx, &utxo, &config));
-    digest = digest.add_bool(valid_tx(&utxo, &tx, case.height, &config));
+    digest = digest.add_bool(valid_tx_structural(&utxo, &tx, case.height, &config));
     digest = digest.add_u64(structural_tx_cost(&tx));
 
     let mut post = utxo.clone();
@@ -572,11 +592,11 @@ fn record_block_case(mut digest: Digest, case_index: usize, case: &BlockCase) ->
     digest = digest.add_u64(case.fresh_id);
     digest = digest.add_state(&case.observed_ids, &projection, &utxo);
 
-    let transition_result = apply_block_transitions(&utxo, &block, case.height, &config);
-    let valid_result = validate_and_apply_block(&utxo, &block, case.height, &config);
+    let transition_result = apply_block_transitions_structural(&utxo, &block, case.height, &config);
+    let valid_result = validate_and_apply_block_structural(&utxo, &block, case.height, &config);
     digest = digest.add_bool(transition_result.is_some());
     digest = digest.add_bool(check_block_cost(&block));
-    digest = digest.add_bool(valid_block(&utxo, &block, case.height, &config));
+    digest = digest.add_bool(valid_block_structural(&utxo, &block, case.height, &config));
 
     digest = match transition_result {
         None => digest.add_bool(false),
