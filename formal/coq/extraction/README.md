@@ -7,18 +7,22 @@ Sighash v2 transcript/preimage serialization, separated from the SHA-256
 collision-resistance axiom. For PO-5 it covers txid preimage serialization,
 structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
-against the deployed Rust transition functions. The repository-level source
+against the deployed Rust transition functions, plus direct
+`CoqExtractedTransitionKernel` per-case report refinement against the Rust
+`DeployedTransitionKernel` adapter. The repository-level source
 proof layer is the Kani harness set in `../../../src`: PO-8 parser/layout
 alignment plus bounded PO-5 `valid_tx_structural`, `delta_tx`,
 `valid_block_structural`, and structural block-application transition
-harnesses. A separate runtime-refinement layer validates txid
-preimage/hash wiring and runtime UTXO-store behavior against deterministic
+harnesses, plus bounded checks for the Rust `TransitionKernel` adapter
+projection boundary. A separate runtime-refinement layer validates txid
+preimage/SHA-256 wiring and runtime UTXO-store behavior against deterministic
 references. The compiled-artifact
 validation layers are `../../../verify_compiled_refinement.sh`,
 `../../../verify_sighash_refinement.sh`, and
 `../../../verify_txid_refinement.sh`, and
-`../../../verify_transition_refinement.sh`; runtime txid/store validation is
-`../../../verify_runtime_refinement.sh`.
+`../../../verify_transition_refinement.sh`; TransitionKernel adapter validation
+is `../../../verify_transition_kernel_refinement.sh`; runtime txid/store
+validation is `../../../verify_runtime_refinement.sh`.
 
 ## Source of Truth
 
@@ -76,6 +80,14 @@ validation layers are `../../../verify_compiled_refinement.sh`,
 - `transition_refinement.ml` summarizes the extracted transition behavior over
   deterministic transaction, block, and block-cost matrices. The matching Rust
   executable is `examples/generate_transition_refinement.rs`.
+- `transition_kernel_refinement.ml` wraps the extracted transition functions as
+  a `CoqExtractedTransitionKernel` oracle and emits per-case
+  `StructuralTxReport`/`StructuralBlockReport` witnesses over the same
+  projection matrix. The matching Rust executable is
+  `examples/generate_transition_kernel_refinement.rs`.
+- `compare_transition_kernel_refinement.py` is the semantic comparator for those
+  witnesses. It reports mismatches by transaction/block case name and nested
+  field path instead of relying on hash summaries or full-object dumps.
 
 ## Formal Scope
 
@@ -128,18 +140,37 @@ fee-preserving multi-input cases, sequential intra-block dependency,
 intra-block double spend, projected final UTXO states, and exact/over block-cost
 boundaries.
 
+`../../../src/transition_core.rs` defines the Rust transition-kernel adapter
+boundary used by the forward path to a Coq-first verified/extracted transition
+core. The deployed adapter currently delegates to the structural Rust
+entrypoints, but exposes stable transaction and block reports that a future
+extracted kernel must match extensionally.
+The extraction harness now makes that report boundary executable:
+`transition_kernel_refinement.ml` computes the Coq-side reports through
+`CoqExtractedTransitionKernel`, while
+`examples/generate_transition_kernel_refinement.rs` computes the Rust-side
+reports through `DeployedTransitionKernel`. The comparison observes report
+fields, projected pre-states, transaction/block witnesses, and projected final
+UTXO states, not internal map order or witness cryptographic checks.
+
 This does not prove SHA-256 txid collision resistance, UTXO-store backend internals,
 PQ witness cryptographic verification, or compiler/toolchain correctness.
 `verify_txid_refinement.sh` adds the txid release-binary validation layer and
 emits `target/txid-refinement/txid_refinement_certificate.json`.
 `verify_transition_refinement.sh` adds the transition release-binary validation layer and
 emits `target/transition-refinement/transition_refinement_certificate.json`.
-The source-level layer adds nineteen Kani bounded PO-5 harnesses for the
+`verify_transition_kernel_refinement.sh` adds the TransitionKernel report
+release-binary validation layer and emits
+`target/transition-kernel-refinement/transition_kernel_refinement_certificate.json`.
+On mismatch it invokes `compare_transition_kernel_refinement.py`, which prints
+field-level semantic diffs by case name.
+The source-level layer adds twenty-one Kani bounded PO-5 harnesses for the
 deployed Rust structural entrypoints: seven `valid_tx_structural` cases
 including the PQ-spend structural boundary, five `delta_tx`
 removal/preservation/insertion/empty/full-spend-create cases, and four
 `valid_block_structural` empty/sequential/rejection cases plus three structural
-block-application final-state/projection cases. Under `cfg(kani)`, the UTXO representation is
+block-application final-state/projection cases, plus two `TransitionKernel`
+adapter report/projection cases. Under `cfg(kani)`, the UTXO representation is
 a deterministic fixed-capacity finite map and `compute_txid` is a bounded
 structural model, so the verifier is not forced through OS-randomized hash
 seeding or SHA-256 internals. Those harnesses complement the extracted matrix,
@@ -208,9 +239,10 @@ The source-level Rust layer is intentionally separate from extraction:
 `src/encoding.rs` now exposes an internal allocation-free witness layout parser
 used by the public parser, consensus parser, and canonicality predicates, and
 `src/kani_proofs.rs` verifies five bounded symbolic harnesses over that deployed
-Rust source. The same proof module also verifies nineteen bounded PO-5
+Rust source. The same proof module also verifies twenty-one bounded PO-5
 transition harnesses over deployed `valid_tx_structural`, `delta_tx`,
-`valid_block_structural`, and structural block-application behavior. This
+`valid_block_structural`, structural block-application behavior, and the
+`TransitionKernel` adapter projection. This
 closes the bounded source-level PO-8 parser-refinement step and adds bounded
 source-level PO-5 structural transition evidence.
 
@@ -221,7 +253,9 @@ Coq-extracted summaries, and emits a certificate with source, lockfile, binary,
 and generated-output hashes. `verify_sighash_refinement.sh` performs the same
 release-binary validation pattern for the PO-4 sighash transcript executable.
 `verify_transition_refinement.sh` performs the same release-binary validation
-pattern for the PO-5 transition/final-state refinement executable. These give auditable
+pattern for the PO-5 transition/final-state refinement executable.
+`verify_transition_kernel_refinement.sh` performs the same validation pattern for
+the PO-5 TransitionKernel per-case report executable. These give auditable
 translation-validation artifacts for the produced binaries. The runtime
 refinement validator follows the same certificate pattern for txid/store runtime
 behavior, while still leaving compiler correctness outside the current artifact

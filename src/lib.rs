@@ -28,6 +28,9 @@ pub mod weight;
 /// Freeze_Enforcer: frozen output detection and spend rejection.
 pub mod freeze;
 
+/// Structural transition-kernel adapter boundary for PO-5.
+pub mod transition_core;
+
 /// Consensus parameters and constants.
 pub mod params;
 
@@ -60,6 +63,11 @@ pub use weight::{check_block_cost, cost_tx};
 
 // Freeze enforcer (Req 5.1, 5.2, 5.3)
 pub use freeze::is_frozen;
+
+// Structural transition-kernel adapter boundary (PO-5)
+pub use transition_core::{
+    DeployedTransitionKernel, StructuralBlockReport, StructuralTxReport, TransitionKernel,
+};
 
 // Consensus parameters (Req 1.1, 1.2, 1.5, 2.9, 3.5, 4.1, 4.6, 8.1)
 pub use params::{

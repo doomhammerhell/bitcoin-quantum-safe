@@ -41,4 +41,7 @@ name = "generate_txid_refinement"
 name = "generate_transition_refinement"
 
 [[example]]
+name = "generate_transition_kernel_refinement"
+
+[[example]]
 name = "generate_runtime_refinement"

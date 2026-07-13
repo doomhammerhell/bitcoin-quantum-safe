@@ -13,13 +13,16 @@ on:
       - "examples/generate_sighash_refinement.rs"
       - "examples/generate_txid_refinement.rs"
       - "examples/generate_transition_refinement.rs"
+      - "examples/generate_transition_kernel_refinement.rs"
       - "examples/generate_runtime_refinement.rs"
       - "build_extraction.sh"
+      - "compare_transition_kernel_refinement.py"
       - "verify_source_refinement.sh"
       - "verify_compiled_refinement.sh"
       - "verify_sighash_refinement.sh"
       - "verify_txid_refinement.sh"
       - "verify_transition_refinement.sh"
+      - "verify_transition_kernel_refinement.sh"
       - "verify_runtime_refinement.sh"
       - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
@@ -35,13 +38,16 @@ on:
       - "examples/generate_sighash_refinement.rs"
       - "examples/generate_txid_refinement.rs"
       - "examples/generate_transition_refinement.rs"
+      - "examples/generate_transition_kernel_refinement.rs"
       - "examples/generate_runtime_refinement.rs"
       - "build_extraction.sh"
+      - "compare_transition_kernel_refinement.py"
       - "verify_source_refinement.sh"
       - "verify_compiled_refinement.sh"
       - "verify_sighash_refinement.sh"
       - "verify_txid_refinement.sh"
       - "verify_transition_refinement.sh"
+      - "verify_transition_kernel_refinement.sh"
       - "verify_runtime_refinement.sh"
       - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
@@ -117,6 +123,12 @@ jobs:
           name: coq-transition-refinement
           path: formal/coq/extraction/coq_transition_refinement.json
 
+      - name: Upload Coq transition-kernel refinement witnesses
+        uses: actions/upload-artifact@v4
+        with:
+          name: coq-transition-kernel-refinement
+          path: formal/coq/extraction/coq_transition_kernel_refinement.json
+
   # Job 2: Generate Rust golden vectors
   generate-rust-vectors:
     runs-on: ubuntu-latest
@@ -138,6 +150,7 @@ jobs:
           cargo run --example generate_sighash_refinement > rust_sighash_refinement.json
           cargo run --example generate_txid_refinement > rust_txid_refinement.json
           cargo run --example generate_transition_refinement > rust_transition_refinement.json
+          cargo run --example generate_transition_kernel_refinement > rust_transition_kernel_refinement.json
 
       - name: Upload Rust vectors
         uses: actions/upload-artifact@v4
@@ -174,6 +187,12 @@ jobs:
         with:
           name: rust-transition-refinement
           path: rust_transition_refinement.json
+
+      - name: Upload Rust transition-kernel refinement witnesses
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-transition-kernel-refinement
+          path: rust_transition_kernel_refinement.json
 
   # Job 3: Compare and verify
   compare-vectors:
@@ -244,6 +263,16 @@ jobs:
         with:
           name: rust-transition-refinement
 
+      - name: Download Coq transition-kernel refinement witnesses
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-transition-kernel-refinement
+
+      - name: Download Rust transition-kernel refinement witnesses
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-transition-kernel-refinement
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -292,6 +321,12 @@ jobs:
 
           with open('rust_transition_refinement.json', 'r') as f:
               rust_transition = json.load(f)
+
+          with open('coq_transition_kernel_refinement.json', 'r') as f:
+              coq_transition_kernel = json.load(f)
+
+          with open('rust_transition_kernel_refinement.json', 'r') as f:
+              rust_transition_kernel = json.load(f)
 
           print(f"Coq vectors: {len(coq_data)} test cases")
           print(f"Rust vectors: {len(rust_data)} test cases")
@@ -376,15 +411,30 @@ jobs:
               print(f"Rust: {rust_transition}")
               sys.exit(1)
 
+          if coq_transition_kernel != rust_transition_kernel:
+              import subprocess
+              sys.exit(
+                  subprocess.run(
+                      [
+                          sys.executable,
+                          "compare_transition_kernel_refinement.py",
+                          "coq_transition_kernel_refinement.json",
+                          "rust_transition_kernel_refinement.json",
+                      ]
+                  ).returncode
+              )
+
           print("\n=== SUCCESS: all bounded vectors match byte-for-byte ===")
           print("=== SUCCESS: exhaustive u16 varint refinement summaries match ===")
           print("=== SUCCESS: witness parser/serializer/consensus-domain/trace refinement summaries match ===")
           print("=== SUCCESS: sighash transcript refinement summaries match ===")
           print("=== SUCCESS: txid preimage refinement summaries match ===")
           print("=== SUCCESS: UTXO transition/final-state refinement summaries match ===")
+          print("=== SUCCESS: TransitionKernel per-case structured witnesses match ===")
           print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
           print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
           print("PO-5: Coq txid/UTXO transition/final-state model ↔ Rust implementation extraction-boundary evidence")
+          print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
           EOF
 
   # Job 4: Run Coq proofs
@@ -592,7 +642,42 @@ jobs:
           name: transition-refinement-certificate
           path: target/transition-refinement/transition_refinement_certificate.json
 
-  # Job 10: Validate runtime txid and UTXO-store refinement artifacts
+  # Job 10: Validate compiled transition-kernel adapter artifacts against Coq extraction
+  verify-transition-kernel-refinement:
+    runs-on: ubuntu-latest
+    name: Verify TransitionKernel Refinement
+    needs: [extract-coq]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Coq transition-kernel refinement witnesses
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-transition-kernel-refinement
+          path: formal/coq/extraction
+
+      - name: Run transition-kernel refinement validation
+        run: |
+          ./verify_transition_kernel_refinement.sh
+
+      - name: Upload transition-kernel refinement certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: transition-kernel-refinement-certificate
+          path: target/transition-kernel-refinement/transition_kernel_refinement_certificate.json
+
+  # Job 11: Validate runtime txid and UTXO-store refinement artifacts
   verify-runtime-refinement:
     runs-on: ubuntu-latest
     name: Verify Runtime Txid/Map Refinement
@@ -620,7 +705,7 @@ jobs:
           name: runtime-refinement-certificate
           path: target/runtime-refinement/runtime_refinement_certificate.json
 
-  # Job 11: Performance benchmarks
+  # Job 12: Performance benchmarks
   run-benchmarks:
     runs-on: ubuntu-latest
     name: ML-DSA-44 Performance Benchmarks

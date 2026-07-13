@@ -10,8 +10,11 @@ Rust preimage serialization path. PO-5 now includes a mechanized
 txid shape, Coq-extracted txid/transition summaries compared against Rust
 structural transaction/block transition functions, plus Kani bounded
 source-level harnesses for deployed `valid_tx_structural`, `delta_tx`,
-`valid_block_structural`, and structural block-application final-state
-behavior. The runtime layer also validates txid preimage/hash wiring and
+`valid_block_structural`, structural block-application final-state behavior,
+and the Rust `TransitionKernel` adapter boundary. The extraction layer also
+wraps the Coq structural functions as a `CoqExtractedTransitionKernel` oracle
+and compares `StructuralTxReport`/`StructuralBlockReport` per-case witnesses
+directly against the Rust `DeployedTransitionKernel` adapter. The runtime layer also validates txid preimage/SHA-256 wiring and
 UTXO-store extensional behavior against independent deterministic references.
 Rust property-based tests, Kani
 source-level bounded harnesses, and release-binary validation provide executable
@@ -109,12 +112,28 @@ verification, legacy output creation after activation, mixed inputs,
 fee-preserving multi-input transactions, sequential intra-block dependencies,
 intra-block double spends, projected final UTXO states, and exact/over-limit
 block-cost boundaries.
-`../../src/kani_proofs.rs` adds nineteen bounded source-level PO-5 harnesses
+`extraction/transition_kernel_refinement.ml` builds the
+`CoqExtractedTransitionKernel` oracle over the same Coq-extracted transition
+functions and emits per-case witnesses for the directly observable
+`StructuralTxReport` and `StructuralBlockReport` fields, including projected
+pre-state and final-state observations. The matching Rust executable is
+`../../examples/generate_transition_kernel_refinement.rs`, which calls the
+deployed `DeployedTransitionKernel` adapter rather than reusing the legacy
+summary path. `../../compare_transition_kernel_refinement.py` compares those
+witnesses by case name and emits semantic field-level diffs on mismatch.
+`../../src/transition_core.rs` exposes the Rust `TransitionKernel` contract,
+`StructuralTxReport`, `StructuralBlockReport`, and the deployed
+`DeployedTransitionKernel` adapter. The deployed adapter currently delegates to
+the structural Rust entrypoints, while making the future Coq-extracted
+transition-core substitution boundary explicit: accept/reject decisions,
+observable structural subdecisions, and final UTXO snapshots must match.
+`../../src/kani_proofs.rs` adds twenty-one bounded source-level PO-5 harnesses
 over deployed Rust structural transition control flow: seven
 `valid_tx_structural` cases including the PQ-spend structural boundary,
 five `delta_tx` removal/preservation/insertion/empty/full-spend-create cases,
 four `valid_block_structural` empty/sequential/rejection cases, and three
-structural block-application final-state/projection cases. Under `cfg(kani)`, the UTXO map
+structural block-application final-state/projection cases, plus two
+`TransitionKernel` adapter report/projection cases. Under `cfg(kani)`, the UTXO map
 is a deterministic fixed-capacity finite map and `compute_txid` is a bounded
 structural model so the verifier is not forced through OS-randomized hash
 seeding or SHA-256 internals. These harnesses complement the extracted matrix,
@@ -123,6 +142,10 @@ nor do they prove SHA-256 txid collision resistance, PQ witness cryptographic
 verification, compiler correctness, or toolchain correctness.
 `../../verify_txid_refinement.sh` validates the optimized txid refinement binary
 against the Coq-extracted txid transcript summary.
+`../../verify_transition_kernel_refinement.sh` validates the optimized
+TransitionKernel report binary against the Coq-extracted
+`CoqExtractedTransitionKernel` oracle witnesses and emits
+`target/transition-kernel-refinement/transition_kernel_refinement_certificate.json`.
 `../../verify_runtime_refinement.sh` separately validates the optimized runtime
 refinement binary against independent references for the domain-separated
 `txid_preimage`, SHA-256 `compute_txid` wiring, canonical UTXO snapshots, and
@@ -145,8 +168,8 @@ backend internals, or compiler/toolchain correctness.
 | Byte-for-byte verification | Coq-extracted serializer harness matches Rust generator |
 | Consensus witness-size guard | `max_witness_size = 16000 <= max_u16`, plus parsed/serialized component length and bounded-canonicality theorems |
 | Consensus parser theorem | `parse_consensus_witness_concrete_*` proves that the consensus-domain parser equals the byte-level parser below the cap, rejects above the cap, and only accepts canonical modeled-domain witnesses |
-| Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 19 PO-5 harnesses verify bounded deployed `valid_tx_structural`, `delta_tx`, `valid_block_structural`, and structural block-application transition behavior |
-| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
+| Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 21 PO-5 harnesses verify bounded deployed `valid_tx_structural`, `delta_tx`, `valid_block_structural`, structural block-application transition behavior, and the `TransitionKernel` adapter projection |
+| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_transition_kernel_refinement.sh` validates TransitionKernel per-case report witnesses against the Coq-extracted oracle and uses `../../compare_transition_kernel_refinement.py` for semantic diffs; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
 | Full CompactSize coverage | Rust implements/tests `0xFE` and `0xFF`; not yet modeled in Coq |
 | Compiler correctness | Not proved |
 
@@ -195,8 +218,8 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   adapter/store obligations, but they are not the primary path for proving
   consensus transition semantics. The current structural transition refinement covers
   structural transaction/block semantics over deterministic edge-case matrices,
-  validates txid and transition release binaries against Coq-extracted
-  summaries, checks bounded deployed `valid_tx_structural`, `delta_tx`,
+  validates txid, transition, and TransitionKernel per-case report release
+  binaries against Coq-extracted witnesses/summaries, checks bounded deployed `valid_tx_structural`, `delta_tx`,
   `valid_block_structural`, and structural block-application behavior with
   Kani, and validates runtime txid/store behavior against independent
   deterministic references; it does not prove SHA-256 primitive

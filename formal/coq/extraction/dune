@@ -33,3 +33,9 @@
  (modules transition_refinement transition_extracted)
  (flags (:standard -w -27-32-33-39))
 )
+
+(executable
+ (name transition_kernel_refinement)
+ (modules transition_kernel_refinement transition_extracted)
+ (flags (:standard -w -27-32-33-39))
+)

@@ -63,6 +63,7 @@ ocamlc -o witness_refinement golden_vectors_extracted.cmo witness_refinement.ml
 ocamlc -o sighash_refinement sighash_extracted.cmo sighash_refinement.ml
 ocamlc -o txid_refinement txid_extracted.cmo txid_refinement.ml
 ocamlc -o transition_refinement transition_extracted.cmo transition_refinement.ml
+ocamlc -o transition_kernel_refinement transition_extracted.cmo transition_kernel_refinement.ml
 
 echo "Running golden vector generator..."
 ./golden_vectors > coq_vectors.json
@@ -78,6 +79,8 @@ echo "Running Coq-extracted txid preimage refinement summary..."
 ./txid_refinement > coq_txid_refinement.json
 echo "Running Coq-extracted transition/final-state refinement summary..."
 ./transition_refinement > coq_transition_refinement.json
+echo "Running Coq-extracted transition-kernel adapter refinement witnesses..."
+./transition_kernel_refinement > coq_transition_kernel_refinement.json
 
 # Step 5: Return to project root and generate Rust vectors
 cd "$SCRIPT_DIR"
@@ -93,6 +96,8 @@ echo "Generating Rust txid preimage refinement summary..."
 cargo run --example generate_txid_refinement > rust_txid_refinement.json
 echo "Generating Rust transition/final-state refinement summary..."
 cargo run --example generate_transition_refinement > rust_transition_refinement.json
+echo "Generating Rust transition-kernel adapter refinement witnesses..."
+cargo run --example generate_transition_kernel_refinement > rust_transition_kernel_refinement.json
 
 # Step 6: Compare
 echo "=========================================="
@@ -187,6 +192,20 @@ except FileNotFoundError:
     print("ERROR: Rust transition refinement summary not found.")
     sys.exit(1)
 
+try:
+    with open('formal/coq/extraction/coq_transition_kernel_refinement.json', 'r') as f:
+        coq_transition_kernel = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq transition-kernel refinement witnesses not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_transition_kernel_refinement.json', 'r') as f:
+        rust_transition_kernel = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust transition-kernel refinement witnesses not found.")
+    sys.exit(1)
+
 print(f"Coq vectors: {len(coq_data)} test cases")
 print(f"Rust vectors: {len(rust_data)} test cases")
 
@@ -268,6 +287,19 @@ if coq_transition != rust_transition:
     print(f"Rust: {rust_transition}")
     sys.exit(1)
 
+if coq_transition_kernel != rust_transition_kernel:
+    import subprocess
+    sys.exit(
+        subprocess.run(
+            [
+                sys.executable,
+                "compare_transition_kernel_refinement.py",
+                "formal/coq/extraction/coq_transition_kernel_refinement.json",
+                "rust_transition_kernel_refinement.json",
+            ]
+        ).returncode
+    )
+
 print("\n=== SUCCESS ===")
 print("All bounded vectors match byte-for-byte!")
 print("Exhaustive u16 varint refinement summaries match!")
@@ -275,9 +307,11 @@ print("Witness parser/serializer/consensus-domain/trace refinement summaries mat
 print("Sighash transcript refinement summaries match!")
 print("Txid preimage refinement summaries match!")
 print("UTXO structural transition/final-state refinement summaries match!")
+print("TransitionKernel per-case structured witnesses match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
 print("PO-5: Coq txid/UTXO structural transition/final-state model ↔ Rust structural entrypoint extraction-boundary evidence")
+print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
 PYEOF
 
 echo ""
@@ -298,6 +332,8 @@ echo "  - formal/coq/extraction/coq_txid_refinement.json"
 echo "  - rust_txid_refinement.json"
 echo "  - formal/coq/extraction/coq_transition_refinement.json"
 echo "  - rust_transition_refinement.json"
+echo "  - formal/coq/extraction/coq_transition_kernel_refinement.json"
+echo "  - rust_transition_kernel_refinement.json"
 echo ""
 echo "Proof Obligations Status:"
 echo "  PO-1 (Totality):          VERIFIED"
@@ -308,8 +344,10 @@ echo "  PO-4 (Rust transcript):     COQ-EXTRACTED VS RUST PREIMAGE SERIALIZATION
 echo "  PO-4 (Compiled artifact):   RUN ./verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
 echo "  PO-5 (Txid preimage):      COQ-EXTRACTED VS RUST TXID PREIMAGE REFINEMENT"
 echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST STRUCTURAL TRANSITION/FINAL-STATE REFINEMENT EVIDENCE"
+echo "  PO-5 (Kernel adapter):     COQ-EXTRACTED ORACLE VS RUST TRANSITIONKERNEL PER-CASE REPORT REFINEMENT"
 echo "  PO-5 (Txid compiled):      RUN ./verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
 echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION/FINAL-STATE VALIDATION"
+echo "  PO-5 (Kernel compiled):    RUN ./verify_transition_kernel_refinement.sh FOR RELEASE-BINARY TRANSITIONKERNEL VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"
 echo "  PO-8 (Rust source):        RUN ./verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"

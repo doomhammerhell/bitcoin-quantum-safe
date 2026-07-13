@@ -14,6 +14,7 @@ use crate::encoding::{
     WitnessLayout,
 };
 use crate::params::{MigrationConfig, MAX_WITNESS_SIZE};
+use crate::transition_core::{DeployedTransitionKernel, TransitionKernel};
 use crate::types::{OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet};
 use crate::{
     apply_block_transitions_structural, compute_txid, delta_tx, delta_tx_insert_created_outputs,
@@ -529,6 +530,82 @@ fn validate_and_apply_block_structural_source_accepts_pq_boundary() {
         Some(final_utxo) => {
             assert!(!final_utxo.contains_key(&root));
             assert_utxo_output(&final_utxo, &created, 2, 1);
+        }
+        None => unreachable!(),
+    }
+}
+
+#[kani::proof]
+#[kani::unwind(160)]
+fn transition_kernel_source_report_matches_structural_validator() {
+    let kernel = DeployedTransitionKernel::new();
+    let root = transition_outpoint(19);
+    let utxo = singleton_utxo(root.clone(), transition_utxo_output(2, 1));
+    let tx = transition_tx(
+        vec![transition_tx_input(root)],
+        vec![transition_tx_output(2, 1)],
+    );
+
+    let report = kernel.structural_tx_report(&utxo, &tx, 50, &transition_config());
+
+    assert_eq!(
+        report.valid,
+        valid_tx_structural(&utxo, &tx, 50, &transition_config())
+    );
+    assert_eq!(
+        kernel.valid_tx_structural(&utxo, &tx, 50, &transition_config()),
+        valid_tx_structural(&utxo, &tx, 50, &transition_config())
+    );
+    assert!(!report.has_duplicate_inputs);
+    assert!(report.all_inputs_present);
+    assert_eq!(report.input_sum, Some(1));
+    assert_eq!(report.output_sum, 1);
+    assert!(report.migration_ok);
+    assert!(report.freeze_ok);
+}
+
+#[kani::proof]
+#[kani::unwind(192)]
+fn transition_kernel_source_block_projection_matches_structural_api() {
+    let kernel = DeployedTransitionKernel::new();
+    let root = transition_outpoint(20);
+    let utxo = singleton_utxo(root.clone(), transition_utxo_output(0, 2));
+    let tx1 = transition_tx(
+        vec![transition_tx_input(root.clone())],
+        vec![transition_tx_output(0, 2)],
+    );
+    let tx1_out = OutPoint {
+        txid: compute_txid(&tx1),
+        vout: 0,
+    };
+    let tx2 = transition_tx(
+        vec![transition_tx_input(tx1_out.clone())],
+        vec![transition_tx_output(2, 1)],
+    );
+    let tx2_out = OutPoint {
+        txid: compute_txid(&tx2),
+        vout: 0,
+    };
+    let block = vec![tx1, tx2];
+
+    let report = kernel.structural_block_report(&utxo, &block, 50, &transition_config());
+    let api_result = validate_and_apply_block_structural(&utxo, &block, 50, &transition_config());
+
+    assert_eq!(report.valid, api_result.is_some());
+    assert_eq!(
+        kernel
+            .validate_and_apply_block_structural(&utxo, &block, 50, &transition_config())
+            .is_some(),
+        api_result.is_some()
+    );
+    assert!(report.transitions_ok);
+    assert!(report.cost_ok);
+
+    match report.final_utxo {
+        Some(final_utxo) => {
+            assert!(!final_utxo.contains_key(&root));
+            assert!(!final_utxo.contains_key(&tx1_out));
+            assert_utxo_output(&final_utxo, &tx2_out, 2, 1);
         }
         None => unreachable!(),
     }
