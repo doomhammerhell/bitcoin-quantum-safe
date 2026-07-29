@@ -1,7 +1,7 @@
 # Coq Mechanization
 
 Machine-checked and executable-evidence artifacts for the PQ witness protocol.
-The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-7, and
+The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-6, PO-7, and
 the bounded varint/canonical witness discharge used for PO-8 evidence. PO-4 is
 proved for the Coq sighash model under the SHA-256 collision-resistance axiom
 and now includes a Coq-extracted transcript constructor compared against the
@@ -11,7 +11,10 @@ txid shape, Coq-extracted txid/transition summaries compared against Rust
 structural transaction/block transition functions, plus Kani bounded
 source-level harnesses for deployed `valid_tx_structural`, `delta_tx`,
 `valid_block_structural`, structural block-application final-state behavior,
-and the Rust `TransitionKernel` adapter boundary. The extraction layer also
+and the Rust `TransitionKernel` adapter boundary. PO-6 now includes an unbounded
+Coq theorem for duplicate-free UTXO-domain preservation under an explicit
+fresh-id/domain-bound precondition, plus Coq-extracted/Rust per-case invariant
+witness comparison. The extraction layer also
 wraps the Coq structural functions as a `CoqExtractedTransitionKernel` oracle
 and compares `StructuralTxReport`/`StructuralBlockReport` per-case witnesses
 directly against the Rust `DeployedTransitionKernel` adapter. The runtime layer also validates txid preimage/SHA-256 wiring and
@@ -86,6 +89,10 @@ modeled transcript layout.
 | `apply_block_transitions_structural_equiv` | PO-5 evidence | Equivalence between sequential structural block-transition application and the transition-validity boolean |
 | `apply_valid_block_structural_equiv` | PO-5 evidence | Equivalence between optional final-state block application and `valid_block_structural` |
 | `apply_valid_block_structural_some_iff_valid` | PO-5 evidence | `Some final_utxo` exists exactly when structural block validation accepts |
+| `delta_tx_preserves_domain_nodup` | PO-6 evidence | Transaction-level preservation of duplicate-free abstract UTXO domains under fresh-id/domain-bound preconditions |
+| `delta_tx_preserves_domain_bound` | PO-6 evidence | Transaction-level preservation that all resulting abstract outpoints remain below the next fresh-id bound |
+| `apply_block_transitions_structural_preserves_domain_nodup` | PO-6 evidence | Sequential block application preserves duplicate-free UTXO domains under the same structural freshness boundary |
+| `apply_valid_block_structural_preserves_domain_nodup` | PO-6 evidence | Accepted structural block application preserves duplicate-free final UTXO domains below `fresh_id + block_output_count block` |
 | `cost_bounded_by_weight` | PO-7 | Cost bounded by transaction weight |
 | `cost_equals_weight` | PO-7 | Exact equality for the modeled weight function |
 | `block_cost_bounded_by_weights` | PO-7 | Block-level cost bound |
@@ -127,6 +134,13 @@ witnesses by case name and emits semantic field-level diffs on mismatch.
 the structural Rust entrypoints, while making the future Coq-extracted
 transition-core substitution boundary explicit: accept/reject decisions,
 observable structural subdecisions, and final UTXO snapshots must match.
+`extraction/transition_invariant_refinement.ml` exposes the PO-6 theorem
+boundary as structured JSON witnesses. It distinguishes theorem-covered accepted
+blocks from rejected blocks and from explicit fresh-id/collision-boundary cases
+where the Coq theorem's freshness precondition is false. The matching Rust
+executable is `../../examples/generate_transition_invariant_refinement.rs`, and
+`../../compare_transition_invariant_refinement.py` reports field-level semantic
+diffs on mismatch.
 `../../src/kani_proofs.rs` adds twenty-one bounded source-level PO-5 harnesses
 over deployed Rust structural transition control flow: seven
 `valid_tx_structural` cases including the PQ-spend structural boundary,
@@ -146,6 +160,10 @@ against the Coq-extracted txid transcript summary.
 TransitionKernel report binary against the Coq-extracted
 `CoqExtractedTransitionKernel` oracle witnesses and emits
 `target/transition-kernel-refinement/transition_kernel_refinement_certificate.json`.
+`../../verify_transition_invariant_refinement.sh` validates the optimized PO-6
+invariant witness binary against the Coq-extracted
+`transition_invariant_refinement.ml` output and emits
+`target/transition-invariant-refinement/transition_invariant_refinement_certificate.json`.
 `../../verify_runtime_refinement.sh` separately validates the optimized runtime
 refinement binary against independent references for the domain-separated
 `txid_preimage`, SHA-256 `compute_txid` wiring, canonical UTXO snapshots, and
@@ -169,7 +187,7 @@ backend internals, or compiler/toolchain correctness.
 | Consensus witness-size guard | `max_witness_size = 16000 <= max_u16`, plus parsed/serialized component length and bounded-canonicality theorems |
 | Consensus parser theorem | `parse_consensus_witness_concrete_*` proves that the consensus-domain parser equals the byte-level parser below the cap, rejects above the cap, and only accepts canonical modeled-domain witnesses |
 | Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 21 PO-5 harnesses verify bounded deployed `valid_tx_structural`, `delta_tx`, `valid_block_structural`, structural block-application transition behavior, and the `TransitionKernel` adapter projection |
-| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_transition_kernel_refinement.sh` validates TransitionKernel per-case report witnesses against the Coq-extracted oracle and uses `../../compare_transition_kernel_refinement.py` for semantic diffs; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
+| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_transition_kernel_refinement.sh` validates TransitionKernel per-case report witnesses against the Coq-extracted oracle and uses `../../compare_transition_kernel_refinement.py` for semantic diffs; `../../verify_transition_invariant_refinement.sh` validates PO-6 UTXO-domain invariant witnesses against Coq extraction and uses `../../compare_transition_invariant_refinement.py` for semantic diffs; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
 | Full CompactSize coverage | Rust implements/tests `0xFE` and `0xFF`; not yet modeled in Coq |
 | Compiler correctness | Not proved |
 
@@ -225,8 +243,13 @@ The cryptographic primitives (`H`, `Vfy`) are axiomatized as parameters, matchin
   deterministic references; it does not prove SHA-256 primitive
   correctness/collision resistance, PQ witness cryptographic verification, or
   compiler/toolchain correctness.
-- Connect the finite TLA+ PO-6 model to the Coq/Rust transition artifacts if the
-  project requires a single cross-artifact proof ledger.
+- If full end-to-end PO-6 closure is required, extend the current Coq
+  UTXO-domain preservation theorem to value conservation, migration/freeze
+  monotonicity, and the full witness-verifying consensus transition path. The
+  current PO-6 artifact is intentionally scoped to structural UTXO-domain
+  uniqueness under an explicit fresh-id/domain-bound precondition, with
+  Coq-extracted/Rust/release-binary witness evidence over edge and
+  non-applicability cases.
 
 ## Technical Debt
 

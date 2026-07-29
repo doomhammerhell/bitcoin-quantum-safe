@@ -34,4 +34,10 @@ Extraction "transition_extracted.ml"
   TransitionExtraction.extract_valid_block_transitions_structural
   TransitionExtraction.extract_valid_block_structural
   TransitionExtraction.extract_apply_block_transitions_structural
-  TransitionExtraction.extract_apply_valid_block_structural.
+  TransitionExtraction.extract_apply_valid_block_structural
+  TransitionExtraction.extract_utxo_domain
+  TransitionExtraction.extract_domain_has_no_duplicates
+  TransitionExtraction.extract_domain_below_bool
+  TransitionExtraction.extract_block_output_count
+  TransitionExtraction.extract_block_input_outpoints
+  TransitionExtraction.extract_spent_inputs_absent_bool.

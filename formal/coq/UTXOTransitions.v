@@ -558,6 +558,289 @@ Definition option_is_some {A : Type} (value : option A) : bool :=
   | None => false
   end.
 
+(* ================================================================= *)
+(** * Part V: PO-6 Structural UTXO-Domain Invariants                 *)
+(* ================================================================= *)
+
+(** The TLA+ model checks invariant preservation over finite executions.  The
+    lemmas below add an unbounded Coq theorem for the extraction-facing
+    structural block semantics: if the pre-state has a unique UTXO domain and
+    the abstract fresh-id range starts above every current outpoint, then
+    sequential structural block application preserves a unique UTXO domain.
+
+    This deliberately makes the txid/freshness boundary explicit.  In Rust,
+    fresh IDs are [compute_txid(tx), vout]; proving that those never collide
+    with live UTXO entries requires the SHA-256 collision-resistance / txid
+    freshness assumption, not an association-list theorem. *)
+
+Definition utxo_domain (U : UtxoSet) : list nat :=
+  map fst U.
+
+Definition domain_below (U : UtxoSet) (bound : nat) : Prop :=
+  forall op, In op (utxo_domain U) -> op < bound.
+
+Fixpoint all_lt_nat (xs : list nat) (bound : nat) : bool :=
+  match xs with
+  | [] => true
+  | x :: rest => (x <? bound) && all_lt_nat rest bound
+  end.
+
+Definition domain_below_bool (U : UtxoSet) (bound : nat) : bool :=
+  all_lt_nat (utxo_domain U) bound.
+
+Definition domain_has_no_duplicates (U : UtxoSet) : bool :=
+  negb (has_duplicate_nat (utxo_domain U)).
+
+Fixpoint block_output_count (txs : list Transaction) : nat :=
+  match txs with
+  | [] => 0
+  | tx :: rest => length (outputs tx) + block_output_count rest
+  end.
+
+Definition block_input_outpoints (txs : list Transaction) : list nat :=
+  flat_map input_outpoints txs.
+
+Fixpoint all_absent_from_utxo (U : UtxoSet) (ops : list nat) : bool :=
+  match ops with
+  | [] => true
+  | op :: rest =>
+      match lookup U op with
+      | Some _ => false
+      | None => all_absent_from_utxo U rest
+      end
+  end.
+
+Definition spent_inputs_absent_bool (U : UtxoSet) (txs : list Transaction) : bool :=
+  all_absent_from_utxo U (block_input_outpoints txs).
+
+Lemma in_domain_remove : forall U removed op,
+  In op (utxo_domain (remove U removed)) ->
+  In op (utxo_domain U).
+Proof.
+  induction U as [| [k v] rest IH]; intros removed op Hin; simpl in *.
+  - exact Hin.
+  - destruct (Nat.eqb k removed) eqn:Heq.
+    + right. apply (IH removed op). exact Hin.
+    + simpl in Hin. destruct Hin as [Heq_op | Hin].
+      * left. exact Heq_op.
+      * right. apply (IH removed op). exact Hin.
+Qed.
+
+Lemma domain_remove_nodup : forall U removed,
+  NoDup (utxo_domain U) ->
+  NoDup (utxo_domain (remove U removed)).
+Proof.
+  induction U as [| [k v] rest IH]; intros removed Hnodup; simpl in *.
+  - constructor.
+  - inversion Hnodup as [| ? ? Hnotin Hrest_nodup]; subst.
+    destruct (Nat.eqb k removed) eqn:Heq.
+    + apply IH. exact Hrest_nodup.
+    + simpl. constructor.
+      * intros Hin.
+        apply Hnotin.
+        apply in_domain_remove with (removed := removed).
+        exact Hin.
+      * apply IH. exact Hrest_nodup.
+Qed.
+
+Lemma domain_remove_below : forall U removed bound,
+  domain_below U bound ->
+  domain_below (remove U removed) bound.
+Proof.
+  unfold domain_below.
+  intros U removed bound Hbelow op Hin.
+  apply Hbelow.
+  apply in_domain_remove with (removed := removed).
+  exact Hin.
+Qed.
+
+Lemma domain_remove_inputs_nodup : forall ins U,
+  NoDup (utxo_domain U) ->
+  NoDup (utxo_domain (remove_inputs U ins)).
+Proof.
+  induction ins as [| inp rest IH]; intros U Hnodup; simpl.
+  - exact Hnodup.
+  - apply IH. apply domain_remove_nodup. exact Hnodup.
+Qed.
+
+Lemma domain_remove_inputs_below : forall ins U bound,
+  domain_below U bound ->
+  domain_below (remove_inputs U ins) bound.
+Proof.
+  induction ins as [| inp rest IH]; intros U bound Hbelow; simpl.
+  - exact Hbelow.
+  - apply IH. apply domain_remove_below. exact Hbelow.
+Qed.
+
+Lemma domain_app_single : forall U k v,
+  utxo_domain (U ++ [(k, v)]) = utxo_domain U ++ [k].
+Proof.
+  induction U as [| [k' v'] rest IH]; intros k v; simpl.
+  - reflexivity.
+  - rewrite IH. reflexivity.
+Qed.
+
+Lemma domain_add_outputs : forall outs U base,
+  utxo_domain (add_outputs U outs base) =
+  utxo_domain U ++ seq base (length outs).
+Proof.
+  induction outs as [| out rest IH]; intros U base; simpl.
+  - rewrite app_nil_r. reflexivity.
+  - rewrite IH.
+    rewrite domain_app_single.
+    rewrite <- app_assoc.
+    simpl. reflexivity.
+Qed.
+
+Lemma seq_nodup : forall start len,
+  NoDup (seq start len).
+Proof.
+  intros start len. revert start.
+  induction len as [| len IH]; intros base; simpl.
+  - constructor.
+  - constructor.
+    + intros Hin. apply in_seq in Hin. lia.
+    + apply IH.
+Qed.
+
+Lemma NoDup_app_disjoint : forall (xs ys : list nat),
+  NoDup xs ->
+  NoDup ys ->
+  (forall x, In x xs -> In x ys -> False) ->
+  NoDup (xs ++ ys).
+Proof.
+  induction xs as [| x xs IH]; intros ys Hxs Hys Hdisjoint; simpl.
+  - exact Hys.
+  - inversion Hxs as [| ? ? Hnotin Hxs_nodup]; subst.
+    constructor.
+    + intros Hin.
+      apply in_app_iff in Hin.
+      destruct Hin as [Hin_xs | Hin_ys].
+      * apply Hnotin. exact Hin_xs.
+      * apply (Hdisjoint x).
+        -- left. reflexivity.
+        -- exact Hin_ys.
+    + apply IH.
+      * exact Hxs_nodup.
+      * exact Hys.
+      * intros y Hy Hiny.
+        apply (Hdisjoint y).
+        -- right. exact Hy.
+        -- exact Hiny.
+Qed.
+
+Lemma domain_add_outputs_nodup : forall outs U base,
+  NoDup (utxo_domain U) ->
+  domain_below U base ->
+  NoDup (utxo_domain (add_outputs U outs base)).
+Proof.
+  intros outs U base Hnodup Hbelow.
+  rewrite domain_add_outputs.
+  apply NoDup_app_disjoint.
+  - exact Hnodup.
+  - apply seq_nodup.
+  - intros op Hin_domain Hin_seq.
+    unfold domain_below in Hbelow.
+    specialize (Hbelow op Hin_domain).
+    apply in_seq in Hin_seq.
+    lia.
+Qed.
+
+Lemma domain_add_outputs_below : forall outs U base,
+  domain_below U base ->
+  domain_below (add_outputs U outs base) (base + length outs).
+Proof.
+  unfold domain_below.
+  intros outs U base Hbelow op Hin.
+  rewrite domain_add_outputs in Hin.
+  apply in_app_iff in Hin.
+  destruct Hin as [Hin_old | Hin_new].
+  - specialize (Hbelow op Hin_old). lia.
+  - apply in_seq in Hin_new. lia.
+Qed.
+
+Theorem delta_tx_preserves_domain_nodup :
+  forall U tx fresh_id,
+    NoDup (utxo_domain U) ->
+    domain_below U fresh_id ->
+    NoDup (utxo_domain (delta_tx U tx fresh_id)).
+Proof.
+  intros U tx fresh_id Hnodup Hbelow.
+  unfold delta_tx.
+  apply domain_add_outputs_nodup.
+  - apply domain_remove_inputs_nodup. exact Hnodup.
+  - apply domain_remove_inputs_below. exact Hbelow.
+Qed.
+
+Theorem delta_tx_preserves_domain_bound :
+  forall U tx fresh_id,
+    domain_below U fresh_id ->
+    domain_below (delta_tx U tx fresh_id) (fresh_id + length (outputs tx)).
+Proof.
+  intros U tx fresh_id Hbelow.
+  unfold delta_tx.
+  apply domain_add_outputs_below.
+  apply domain_remove_inputs_below.
+  exact Hbelow.
+Qed.
+
+Theorem apply_block_transitions_structural_preserves_domain_nodup :
+  forall U txs height config fresh_id U',
+    NoDup (utxo_domain U) ->
+    domain_below U fresh_id ->
+    apply_block_transitions_structural U txs height config fresh_id = Some U' ->
+    NoDup (utxo_domain U') /\
+    domain_below U' (fresh_id + block_output_count txs).
+Proof.
+  intros U txs. revert U.
+  induction txs as [| tx rest IH]; intros U height config fresh_id U' Hnodup Hbelow Happly; simpl in *.
+  - inversion Happly. subst U'. split.
+    + exact Hnodup.
+    + unfold domain_below in *. intros op Hin. specialize (Hbelow op Hin). lia.
+  - destruct (valid_tx_structural U tx height config) eqn:Hvalid.
+    + specialize
+        (IH
+           (delta_tx U tx fresh_id)
+           height
+           config
+           (fresh_id + length (outputs tx))
+           U').
+      assert (Hnext_nodup : NoDup (utxo_domain (delta_tx U tx fresh_id))).
+      { apply delta_tx_preserves_domain_nodup; assumption. }
+      assert
+        (Hnext_below :
+          domain_below
+            (delta_tx U tx fresh_id)
+            (fresh_id + length (outputs tx))).
+      { apply delta_tx_preserves_domain_bound. exact Hbelow. }
+      specialize (IH Hnext_nodup Hnext_below Happly).
+      destruct IH as [Hfinal_nodup Hfinal_below].
+      split.
+      * exact Hfinal_nodup.
+      * unfold domain_below in *. intros op Hin.
+        specialize (Hfinal_below op Hin). lia.
+    + discriminate.
+Qed.
+
+Theorem apply_valid_block_structural_preserves_domain_nodup :
+  forall U txs height config fresh_id U',
+    NoDup (utxo_domain U) ->
+    domain_below U fresh_id ->
+    apply_valid_block_structural U txs height config fresh_id = Some U' ->
+    NoDup (utxo_domain U') /\
+    domain_below U' (fresh_id + block_output_count txs).
+Proof.
+  intros U txs height config fresh_id U' Hnodup Hbelow Happly.
+  unfold apply_valid_block_structural in Happly.
+  destruct (apply_block_transitions_structural U txs height config fresh_id)
+    as [U_trans |] eqn:Htransitions.
+  - destruct (check_block_cost_structural txs) eqn:Hcost.
+    + inversion Happly. subst U_trans.
+      eapply apply_block_transitions_structural_preserves_domain_nodup; eauto.
+    + discriminate.
+  - discriminate.
+Qed.
+
 Theorem valid_block_structural_deterministic :
   forall U txs height config fresh_id,
     valid_block_structural U txs height config fresh_id =
@@ -645,10 +928,15 @@ Qed.
     2. [delta_tx_deterministic_ext]: extensional determinism
     3. [delta_tx_preserves_no_double_spend]: no-double-spend preservation
 
+    PO-6: Invariant Preservation
+    4. [apply_valid_block_structural_preserves_domain_nodup]:
+       valid structural block application preserves a unique UTXO domain
+       under the explicit fresh-id bound
+
     PO-7: Cost Boundedness
-    4. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
-    5. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
-    6. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
+    5. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
+    6. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
+    7. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
 
     Correspondence to other artifacts:
     - UTXO model matches [formal/tla/BitcoinPQ.tla] (outpoint ids, delta)

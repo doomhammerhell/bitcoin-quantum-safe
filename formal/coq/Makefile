@@ -76,6 +76,7 @@ verify: all
 	@echo "PO-3 (Parse Canonicality): VERIFIED (SpendPredPQ.vo)"
 	@echo "PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.vo + Rust PBT)"
 	@echo "PO-5 (Transition Det.):    VERIFIED MODEL (UTXOTransitions.vo); txid/transition/final-state extraction refinement via build_extraction.sh"
+	@echo "PO-6 (Invariant Pres.):    STRUCTURAL UTXO-DOMAIN THEOREM (UTXOTransitions.vo); invariant witness refinement via build_extraction.sh"
 	@echo "PO-7 (Cost Boundedness):   VERIFIED (UTXOTransitions.vo)"
 	@echo "PO-8 (Correspondence):     BOUNDED EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT"
 
@@ -84,9 +85,9 @@ clean:
 	rm -f *.lia.cache .lia.cache *.nia.cache .nia.cache
 	rm -f extraction/*.vo extraction/*.vok extraction/*.vos extraction/*.glob extraction/.*.aux
 	rm -f extraction/*.lia.cache extraction/.lia.cache extraction/*.nia.cache extraction/.nia.cache
-	rm -f extraction/*.cmi extraction/*.cmo extraction/golden_vectors extraction/varint_refinement extraction/witness_refinement extraction/sighash_refinement extraction/txid_refinement extraction/transition_refinement
+	rm -f extraction/*.cmi extraction/*.cmo extraction/golden_vectors extraction/varint_refinement extraction/witness_refinement extraction/sighash_refinement extraction/txid_refinement extraction/transition_refinement extraction/transition_kernel_refinement extraction/transition_invariant_refinement
 	rm -f extraction/golden_vectors_extracted.ml extraction/golden_vectors_extracted.mli
 	rm -f extraction/sighash_extracted.ml extraction/sighash_extracted.mli
 	rm -f extraction/txid_extracted.ml extraction/txid_extracted.mli
 	rm -f extraction/transition_extracted.ml extraction/transition_extracted.mli
-	rm -f extraction/coq_varint_refinement.json extraction/coq_witness_refinement.json extraction/coq_sighash_refinement.json extraction/coq_txid_refinement.json extraction/coq_transition_refinement.json
+	rm -f extraction/coq_varint_refinement.json extraction/coq_witness_refinement.json extraction/coq_sighash_refinement.json extraction/coq_txid_refinement.json extraction/coq_transition_refinement.json extraction/coq_transition_kernel_refinement.json extraction/coq_transition_invariant_refinement.json

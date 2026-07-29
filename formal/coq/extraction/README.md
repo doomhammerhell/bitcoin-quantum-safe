@@ -1,4 +1,4 @@
-# PO-4/PO-5/PO-8 Extraction and Refinement Vectors
+# PO-4/PO-5/PO-6/PO-8 Extraction and Refinement Vectors
 
 This directory contains the Coq/Rust extraction-boundary correspondence evidence
 used by CI. For PO-8 it covers bounded witness encoding, varint, consensus-domain
@@ -7,7 +7,8 @@ Sighash v2 transcript/preimage serialization, separated from the SHA-256
 collision-resistance axiom. For PO-5 it covers txid preimage serialization,
 structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
-against the deployed Rust transition functions, plus direct
+against the deployed Rust transition functions, plus PO-6 UTXO-domain invariant
+witness refinement under the explicit Coq fresh-id theorem boundary, plus direct
 `CoqExtractedTransitionKernel` per-case report refinement against the Rust
 `DeployedTransitionKernel` adapter. The repository-level source
 proof layer is the Kani harness set in `../../../src`: PO-8 parser/layout
@@ -21,7 +22,8 @@ validation layers are `../../../verify_compiled_refinement.sh`,
 `../../../verify_sighash_refinement.sh`, and
 `../../../verify_txid_refinement.sh`, and
 `../../../verify_transition_refinement.sh`; TransitionKernel adapter validation
-is `../../../verify_transition_kernel_refinement.sh`; runtime txid/store
+is `../../../verify_transition_kernel_refinement.sh`; PO-6 invariant validation
+is `../../../verify_transition_invariant_refinement.sh`; runtime txid/store
 validation is `../../../verify_runtime_refinement.sh`.
 
 ## Source of Truth
@@ -88,6 +90,15 @@ validation is `../../../verify_runtime_refinement.sh`.
 - `compare_transition_kernel_refinement.py` is the semantic comparator for those
   witnesses. It reports mismatches by transaction/block case name and nested
   field path instead of relying on hash summaries or full-object dumps.
+- `transition_invariant_refinement.ml` exposes the PO-6 UTXO-domain preservation
+  theorem boundary as per-case structured witnesses. It reports pre-state domain
+  uniqueness, fresh-id/domain-bound applicability, accepted/rejected block
+  results, final-state domain observations, spent-input absence, and explicit
+  non-applicability reasons for freshness-boundary cases. The matching Rust
+  executable is `examples/generate_transition_invariant_refinement.rs`.
+- `compare_transition_invariant_refinement.py` is the semantic comparator for
+  the PO-6 invariant witnesses. It reports mismatches by block case name and
+  nested field path, including theorem-applicability and boundary-reason fields.
 
 ## Formal Scope
 
@@ -184,6 +195,38 @@ references. This narrows the txid/store implementation boundary, but it is not a
 proof of SHA-256 primitive correctness, store backend internals, or compiler
 output.
 
+### PO-6 UTXO-Domain Invariant Scope
+
+PO-6 now has a Coq theorem over the structural UTXO-domain invariant in addition
+to TLC finite-state model checking. `UTXOTransitions.v` defines the abstract
+domain of an association-list UTXO set and proves that accepted structural block
+application preserves a duplicate-free final domain below the next fresh-id
+bound:
+
+- initial UTXO domain has no duplicate abstract outpoint IDs;
+- every initial outpoint ID is strictly below the fresh-id base;
+- `apply_valid_block_structural` accepts and returns a final state;
+- the final UTXO domain remains duplicate-free and below
+  `fresh_id + block_output_count block`.
+
+The extraction harness intentionally makes this precondition visible. Cases with
+missing inputs or intra-block double spends are rejected-block witnesses; cases
+where the fresh-id/domain-bound precondition is false are non-applicability
+witnesses, not failed proofs. This keeps the txid/freshness/collision boundary
+explicit: the Coq theorem does not derive fresh txids from SHA-256, and the Rust
+projection does not pretend that a single abstract ID can safely represent both
+an old UTXO and a newly created output.
+
+`verify_transition_invariant_refinement.sh` builds the optimized Rust invariant
+witness executable, compares it against
+`coq_transition_invariant_refinement.json` through
+`compare_transition_invariant_refinement.py`, and emits
+`target/transition-invariant-refinement/transition_invariant_refinement_certificate.json`
+with toolchain, input, binary, and generated-output hashes. This is operational
+evidence for the structural-domain invariant boundary; it is not a proof of
+full consensus invariant preservation, cryptographic witness verification,
+txid collision resistance, store backend internals, or compiler correctness.
+
 ### PO-8 Witness Encoding Scope
 
 The current Coq varint model covers Bitcoin CompactSize values in:
@@ -255,7 +298,9 @@ release-binary validation pattern for the PO-4 sighash transcript executable.
 `verify_transition_refinement.sh` performs the same release-binary validation
 pattern for the PO-5 transition/final-state refinement executable.
 `verify_transition_kernel_refinement.sh` performs the same validation pattern for
-the PO-5 TransitionKernel per-case report executable. These give auditable
+the PO-5 TransitionKernel per-case report executable.
+`verify_transition_invariant_refinement.sh` performs the same validation pattern
+for the PO-6 UTXO-domain invariant witness executable. These give auditable
 translation-validation artifacts for the produced binaries. The runtime
 refinement validator follows the same certificate pattern for txid/store runtime
 behavior, while still leaving compiler correctness outside the current artifact

@@ -44,4 +44,7 @@ name = "generate_transition_refinement"
 name = "generate_transition_kernel_refinement"
 
 [[example]]
+name = "generate_transition_invariant_refinement"
+
+[[example]]
 name = "generate_runtime_refinement"
