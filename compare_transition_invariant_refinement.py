@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare PO-6 UTXO-domain invariant refinement witnesses."""
+"""Compare PO-6 UTXO-domain/value invariant refinement witnesses."""
 
 from __future__ import annotations
 
@@ -141,7 +141,7 @@ def main() -> int:
         return 1
 
     print("=== SUCCESS ===")
-    print("PO-6 UTXO-domain invariant witnesses match.")
+    print("PO-6 UTXO-domain/value invariant witnesses match.")
     print(f"Cases: {len(coq.get('cases', []))}")
     return 0
 

@@ -10,6 +10,7 @@
     deterministic state transition function [delta_tx]. We prove:
       - PO-5: Transition determinism (same inputs → same output)
       - PO-5+: No-double-spend preservation across transitions
+      - PO-6: Structural UTXO-domain and total-value invariant preservation
       - PO-7: Cost(tx) ≤ α · weight(tx) with α = 1
 
     The UTXO model is a simplified version of the TLA+ specification
@@ -613,6 +614,15 @@ Fixpoint all_absent_from_utxo (U : UtxoSet) (ops : list nat) : bool :=
 Definition spent_inputs_absent_bool (U : UtxoSet) (txs : list Transaction) : bool :=
   all_absent_from_utxo U (block_input_outpoints txs).
 
+(** Total value carried by a UTXO set.  This is an economic invariant over the
+    structural transition boundary: a structurally valid transaction may burn
+    value as fee, but must not create value. *)
+Fixpoint utxo_total_value (U : UtxoSet) : nat :=
+  match U with
+  | [] => 0
+  | (_, out) :: rest => value out + utxo_total_value rest
+  end.
+
 Lemma in_domain_remove : forall U removed op,
   In op (utxo_domain (remove U removed)) ->
   In op (utxo_domain U).
@@ -841,6 +851,214 @@ Proof.
   - discriminate.
 Qed.
 
+Lemma contains_nat_false_not_in : forall x xs,
+  contains_nat x xs = false ->
+  ~ In x xs.
+Proof.
+  induction xs as [| y ys IH]; intros Hcontains Hin; simpl in *.
+  - exact Hin.
+  - apply Bool.orb_false_iff in Hcontains.
+    destruct Hcontains as [Hhead Htail].
+    destruct Hin as [Heq | Hin].
+    + subst y. rewrite Nat.eqb_refl in Hhead. discriminate.
+    + apply (IH Htail Hin).
+Qed.
+
+Lemma has_duplicate_nat_false_NoDup : forall xs,
+  has_duplicate_nat xs = false ->
+  NoDup xs.
+Proof.
+  induction xs as [| x rest IH]; intros Hdup; simpl in *.
+  - constructor.
+  - apply Bool.orb_false_iff in Hdup.
+    destruct Hdup as [Hnotin Hrest].
+    constructor.
+    + apply contains_nat_false_not_in. exact Hnotin.
+    + apply IH. exact Hrest.
+Qed.
+
+Lemma remove_not_in_domain : forall U op,
+  ~ In op (utxo_domain U) ->
+  remove U op = U.
+Proof.
+  induction U as [| [k v] rest IH]; intros op Hnotin; simpl in *.
+  - reflexivity.
+  - destruct (Nat.eqb k op) eqn:Heq.
+    + apply Nat.eqb_eq in Heq. subst k.
+      exfalso. apply Hnotin. left. reflexivity.
+    + f_equal. apply IH.
+      intros Hin. apply Hnotin. right. exact Hin.
+Qed.
+
+Lemma utxo_total_value_app_single : forall U k out,
+  utxo_total_value (U ++ [(k, out)]) = utxo_total_value U + value out.
+Proof.
+  induction U as [| [k' out'] rest IH]; intros k out; simpl.
+  - lia.
+  - rewrite IH. lia.
+Qed.
+
+Lemma utxo_total_value_add_outputs : forall outs U base,
+  utxo_total_value (add_outputs U outs base) =
+  utxo_total_value U + sum_output_values outs.
+Proof.
+  induction outs as [| out rest IH]; intros U base; simpl.
+  - lia.
+  - rewrite IH.
+    rewrite utxo_total_value_app_single.
+    simpl. lia.
+Qed.
+
+Lemma lookup_remove_value : forall U op out,
+  NoDup (utxo_domain U) ->
+  lookup U op = Some out ->
+  value out + utxo_total_value (remove U op) = utxo_total_value U.
+Proof.
+  induction U as [| [k v] rest IH]; intros op out Hnodup Hlookup; simpl in *.
+  - discriminate.
+  - inversion Hnodup as [| ? ? Hnotin Hrest_nodup]; subst.
+    destruct (Nat.eqb k op) eqn:Heq.
+    + apply Nat.eqb_eq in Heq. subst k.
+      inversion Hlookup. subst out.
+      rewrite remove_not_in_domain.
+      * lia.
+      * exact Hnotin.
+    + simpl.
+      pose proof (IH op out Hrest_nodup Hlookup) as Hrest_value.
+      lia.
+Qed.
+
+Lemma sum_input_values_remove_unmentioned : forall ins U op,
+  ~ In op (map outpoint ins) ->
+  sum_input_values (remove U op) ins = sum_input_values U ins.
+Proof.
+  induction ins as [| inp rest IH]; intros U op Hnotin; simpl in *.
+  - reflexivity.
+  - assert (Hneq : op <> outpoint inp).
+    { intros Heq. apply Hnotin. left. symmetry. exact Heq. }
+    rewrite lookup_remove_diff by exact Hneq.
+    rewrite IH.
+    + reflexivity.
+    + intros Hin. apply Hnotin. right. exact Hin.
+Qed.
+
+Lemma remove_inputs_value : forall ins U input_sum,
+  NoDup (utxo_domain U) ->
+  NoDup (map outpoint ins) ->
+  sum_input_values U ins = Some input_sum ->
+  utxo_total_value (remove_inputs U ins) + input_sum = utxo_total_value U.
+Proof.
+  induction ins as [| inp rest IH]; intros U input_sum Hdomain Hinputs Hsum; simpl in *.
+  - inversion Hsum. lia.
+  - inversion Hinputs as [| ? ? Hnotin_rest Hrest_nodup]; subst.
+    destruct (lookup U (outpoint inp)) as [spent |] eqn:Hlookup; try discriminate.
+    destruct (sum_input_values U rest) as [rest_sum |] eqn:Hrest_sum; try discriminate.
+    inversion Hsum. subst input_sum.
+    assert
+      (Hrest_after_remove :
+        sum_input_values (remove U (outpoint inp)) rest = Some rest_sum).
+    {
+      rewrite sum_input_values_remove_unmentioned.
+      - exact Hrest_sum.
+      - exact Hnotin_rest.
+    }
+    assert
+      (Hremove_one :
+        value spent + utxo_total_value (remove U (outpoint inp)) =
+        utxo_total_value U).
+    { apply lookup_remove_value; assumption. }
+    specialize
+      (IH
+        (remove U (outpoint inp))
+        rest_sum
+        (domain_remove_nodup U (outpoint inp) Hdomain)
+        Hrest_nodup
+        Hrest_after_remove).
+    lia.
+Qed.
+
+Theorem delta_tx_preserves_total_value :
+  forall U tx height config fresh_id,
+    NoDup (utxo_domain U) ->
+    valid_tx_structural U tx height config = true ->
+    utxo_total_value (delta_tx U tx fresh_id) <= utxo_total_value U.
+Proof.
+  intros U tx height config fresh_id Hdomain Hvalid.
+  unfold valid_tx_structural in Hvalid.
+  destruct (has_duplicate_inputs tx) eqn:Hdup; try discriminate.
+  destruct (sum_input_values U (inputs tx)) as [input_sum |] eqn:Hinput_sum; try discriminate.
+  apply Bool.andb_true_iff in Hvalid.
+  destruct Hvalid as [Hvalue_and_migration _Hfreeze].
+  apply Bool.andb_true_iff in Hvalue_and_migration.
+  destruct Hvalue_and_migration as [Hvalue_bound _Hmigration].
+  apply Nat.leb_le in Hvalue_bound.
+  unfold delta_tx.
+  rewrite utxo_total_value_add_outputs.
+  assert (Hinput_nodup : NoDup (map outpoint (inputs tx))).
+  {
+    unfold has_duplicate_inputs in Hdup.
+    apply has_duplicate_nat_false_NoDup. exact Hdup.
+  }
+  pose proof
+    (remove_inputs_value
+      (inputs tx)
+      U
+      input_sum
+      Hdomain
+      Hinput_nodup
+      Hinput_sum)
+    as Hremoved.
+  lia.
+Qed.
+
+Theorem apply_block_transitions_structural_preserves_total_value :
+  forall U txs height config fresh_id U',
+    NoDup (utxo_domain U) ->
+    domain_below U fresh_id ->
+    apply_block_transitions_structural U txs height config fresh_id = Some U' ->
+    utxo_total_value U' <= utxo_total_value U.
+Proof.
+  intros U txs. revert U.
+  induction txs as [| tx rest IH]; intros U height config fresh_id U' Hdomain Hbelow Happly; simpl in *.
+  - inversion Happly. subst U'. lia.
+  - destruct (valid_tx_structural U tx height config) eqn:Hvalid; try discriminate.
+    assert (Hdelta_value : utxo_total_value (delta_tx U tx fresh_id) <= utxo_total_value U).
+    { eapply delta_tx_preserves_total_value; eauto. }
+    assert (Hdelta_domain : NoDup (utxo_domain (delta_tx U tx fresh_id))).
+    { apply delta_tx_preserves_domain_nodup; assumption. }
+    assert
+      (Hdelta_below :
+        domain_below (delta_tx U tx fresh_id) (fresh_id + length (outputs tx))).
+    { apply delta_tx_preserves_domain_bound. exact Hbelow. }
+    specialize
+      (IH
+        (delta_tx U tx fresh_id)
+        height
+        config
+        (fresh_id + length (outputs tx))
+        U'
+        Hdelta_domain
+        Hdelta_below
+        Happly).
+    lia.
+Qed.
+
+Theorem apply_valid_block_structural_preserves_total_value :
+  forall U txs height config fresh_id U',
+    NoDup (utxo_domain U) ->
+    domain_below U fresh_id ->
+    apply_valid_block_structural U txs height config fresh_id = Some U' ->
+    utxo_total_value U' <= utxo_total_value U.
+Proof.
+  intros U txs height config fresh_id U' Hdomain Hbelow Happly.
+  unfold apply_valid_block_structural in Happly.
+  destruct (apply_block_transitions_structural U txs height config fresh_id)
+    as [U_trans |] eqn:Htransitions; try discriminate.
+  destruct (check_block_cost_structural txs) eqn:Hcost; try discriminate.
+  inversion Happly. subst U_trans.
+  eapply apply_block_transitions_structural_preserves_total_value; eauto.
+Qed.
+
 Theorem valid_block_structural_deterministic :
   forall U txs height config fresh_id,
     valid_block_structural U txs height config fresh_id =
@@ -932,11 +1150,14 @@ Qed.
     4. [apply_valid_block_structural_preserves_domain_nodup]:
        valid structural block application preserves a unique UTXO domain
        under the explicit fresh-id bound
+    5. [apply_valid_block_structural_preserves_total_value]:
+       valid structural block application cannot increase total UTXO value
+       under the same duplicate-free domain and fresh-id bound
 
     PO-7: Cost Boundedness
-    5. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
-    6. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
-    7. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
+    6. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
+    7. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
+    8. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
 
     Correspondence to other artifacts:
     - UTXO model matches [formal/tla/BitcoinPQ.tla] (outpoint ids, delta)

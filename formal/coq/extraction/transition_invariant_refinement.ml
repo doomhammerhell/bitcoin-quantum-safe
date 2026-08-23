@@ -135,6 +135,10 @@ let json_nullable_bool = function
   | None -> "null"
   | Some value -> json_bool value
 
+let json_nullable_int = function
+  | None -> "null"
+  | Some value -> string_of_int value
+
 let rec json_int_list = function
   | [] -> "[]"
   | xs -> "[" ^ String.concat ", " (List.map string_of_int xs) ^ "]"
@@ -196,6 +200,9 @@ let json_case case_index case =
   let pre_domain =
     TransitionExtraction.extract_utxo_domain case.block_utxo
   in
+  let pre_total_value =
+    TransitionExtraction.extract_utxo_total_value case.block_utxo
+  in
   let spent_input_ids =
     TransitionExtraction.extract_block_input_outpoints case.block_txs
   in
@@ -232,12 +239,28 @@ let json_case case_index case =
     | None -> None
     | Some utxo -> Some (TransitionExtraction.extract_spent_inputs_absent_bool utxo case.block_txs)
   in
+  let final_total_value =
+    match observed_final with
+    | None -> None
+    | Some utxo -> Some (TransitionExtraction.extract_utxo_total_value utxo)
+  in
+  let final_total_value_lte_pre =
+    match final_total_value with
+    | None -> None
+    | Some total -> Some (total <= pre_total_value)
+  in
   let theorem_applicable = freshness_precondition && option_is_some final_state in
   let theorem_conclusion_holds =
     match final_domain_unique, final_domain_below_next_fresh with
     | Some true, Some true when theorem_applicable -> Some true
     | Some _, Some _ when theorem_applicable -> Some false
     | _, _ -> None
+  in
+  let value_theorem_conclusion_holds =
+    match final_total_value_lte_pre with
+    | Some true when theorem_applicable -> Some true
+    | Some _ when theorem_applicable -> Some false
+    | _ -> None
   in
   Printf.sprintf
     "{\
@@ -249,6 +272,7 @@ let json_case case_index case =
      \"next_fresh_id\": %d, \
      \"observed_ids\": %s, \
      \"pre_domain\": %s, \
+     \"pre_total_value\": %d, \
      \"pre_state\": %s, \
      \"block\": {\"transactions\": %s}, \
      \"spent_input_ids\": %s, \
@@ -262,10 +286,18 @@ let json_case case_index case =
        \"final_state\": %s, \
        \"final_domain_unique\": %s, \
        \"final_domain_below_next_fresh\": %s, \
-       \"spent_inputs_absent\": %s\
+       \"spent_inputs_absent\": %s, \
+       \"final_total_value\": %s, \
+       \"final_total_value_lte_pre\": %s\
      }, \
      \"theorem\": {\
        \"name\": \"apply_valid_block_structural_preserves_domain_nodup\", \
+       \"applicable\": %s, \
+       \"conclusion_holds\": %s, \
+       \"non_applicability_reason\": %s\
+     }, \
+     \"value_theorem\": {\
+       \"name\": \"apply_valid_block_structural_preserves_total_value\", \
        \"applicable\": %s, \
        \"conclusion_holds\": %s, \
        \"non_applicability_reason\": %s\
@@ -278,6 +310,7 @@ let json_case case_index case =
     next_fresh_id
     (json_int_list case.block_observed_ids)
     (json_int_list pre_domain)
+    pre_total_value
     (json_state case.block_observed_ids case.block_utxo)
     (json_block case.block_txs)
     (json_int_list spent_input_ids)
@@ -289,8 +322,13 @@ let json_case case_index case =
     (json_nullable_bool final_domain_unique)
     (json_nullable_bool final_domain_below_next_fresh)
     (json_nullable_bool spent_inputs_absent)
+    (json_nullable_int final_total_value)
+    (json_nullable_bool final_total_value_lte_pre)
     (json_bool theorem_applicable)
     (json_nullable_bool theorem_conclusion_holds)
+    (json_reason (boundary_reason freshness_precondition final_state))
+    (json_bool theorem_applicable)
+    (json_nullable_bool value_theorem_conclusion_holds)
     (json_reason (boundary_reason freshness_precondition final_state))
 
 let indexed_json_cases render cases =
@@ -300,9 +338,9 @@ let indexed_json_cases render cases =
 
 let () =
   Printf.printf "{\n";
-  Printf.printf "  \"model\": \"utxo-domain-invariant-refinement\",\n";
+  Printf.printf "  \"model\": \"utxo-domain-and-value-invariant-refinement\",\n";
   Printf.printf "  \"evidence\": \"per-case-structured-invariant-witnesses\",\n";
-  Printf.printf "  \"proof_boundary\": \"Coq theorem apply_valid_block_structural_preserves_domain_nodup under explicit fresh-id/domain-bound precondition\",\n";
+  Printf.printf "  \"proof_boundary\": \"Coq theorems apply_valid_block_structural_preserves_domain_nodup and apply_valid_block_structural_preserves_total_value under explicit fresh-id/domain-bound precondition\",\n";
   Printf.printf "  \"case_count\": %d,\n" (List.length block_cases);
   Printf.printf "  \"cases\": [\n%s\n  ]\n" (indexed_json_cases json_case block_cases);
   Printf.printf "}\n"

@@ -113,6 +113,11 @@ coq_applicable_cases = [
     for case in coq_value.get("cases", [])
     if case.get("theorem", {}).get("applicable") is True
 ]
+coq_value_applicable_cases = [
+    case
+    for case in coq_value.get("cases", [])
+    if case.get("value_theorem", {}).get("applicable") is True
+]
 coq_boundary_cases = [
     case
     for case in coq_value.get("cases", [])
@@ -120,23 +125,30 @@ coq_boundary_cases = [
 ]
 
 certificate = {
-    "validation": "PO-6 structural UTXO-domain invariant refinement validation",
+    "validation": "PO-6 structural UTXO-domain and value invariant refinement validation",
     "scope": {
-        "claim": "release binary observing Rust structural final-state invariant witnesses produces the same per-case UTXO-domain preservation evidence as the Coq-extracted invariant harness under the explicit fresh-id/domain-bound theorem boundary",
+        "claim": "release binary observing Rust structural final-state invariant witnesses produces the same per-case UTXO-domain preservation and total-value non-increase evidence as the Coq-extracted invariant harness under the explicit fresh-id/domain-bound theorem boundary",
         "non_claim": "this is not a proof of SHA-256 txid collision resistance, UTXO-store backend internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "evidence": {
         "format": "per-case-structured-invariant-witnesses",
         "semantic_diff_tool": "compare_transition_invariant_refinement.py",
         "case_count": len(coq_value.get("cases", [])),
-        "theorem_applicable_case_count": len(coq_applicable_cases),
+        "domain_theorem_applicable_case_count": len(coq_applicable_cases),
+        "value_theorem_applicable_case_count": len(coq_value_applicable_cases),
         "freshness_boundary_case_count": len(coq_boundary_cases),
     },
-    "theorem_boundary": {
+    "domain_theorem_boundary": {
         "coq_theorem": "apply_valid_block_structural_preserves_domain_nodup",
         "precondition": "NoDup (utxo_domain U) / domain_below U fresh_id / apply_valid_block_structural U block height cfg fresh_id = Some U'",
         "conclusion": "NoDup (utxo_domain U') and domain_below U' (fresh_id + block_output_count block)",
         "freshness_boundary": "cases with false fresh_id_assumption_holds are explicit non-applicability witnesses, not theorem-covered executions",
+    },
+    "value_theorem_boundary": {
+        "coq_theorem": "apply_valid_block_structural_preserves_total_value",
+        "precondition": "NoDup (utxo_domain U) / domain_below U fresh_id / apply_valid_block_structural U block height cfg fresh_id = Some U'",
+        "conclusion": "utxo_total_value U' <= utxo_total_value U",
+        "economic_scope": "non-increase of total UTXO value; exact fee accounting and monetary-supply policy are outside this structural theorem",
     },
     "projection": {
         "coq": "association-list UTXO indexed by abstract nat outpoint IDs",
@@ -158,6 +170,6 @@ with open(certificate_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print("=== SUCCESS ===")
-print("Compiled transition invariant refinement binary matches Coq-extracted PO-6 invariant witnesses.")
+print("Compiled transition invariant refinement binary matches Coq-extracted PO-6 domain/value invariant witnesses.")
 print(f"Certificate: {certificate_path}")
 PY

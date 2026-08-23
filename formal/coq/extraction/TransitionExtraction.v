@@ -66,6 +66,7 @@ Definition extract_apply_block_transitions_structural := apply_block_transitions
 Definition extract_apply_valid_block_structural := apply_valid_block_structural.
 Definition extract_option_is_some {A : Type} := @option_is_some A.
 Definition extract_utxo_domain := utxo_domain.
+Definition extract_utxo_total_value := utxo_total_value.
 Definition extract_domain_has_no_duplicates := domain_has_no_duplicates.
 Definition extract_domain_below_bool := domain_below_bool.
 Definition extract_block_output_count := block_output_count.

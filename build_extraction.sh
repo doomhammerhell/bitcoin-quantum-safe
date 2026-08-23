@@ -340,12 +340,12 @@ print("Sighash transcript refinement summaries match!")
 print("Txid preimage refinement summaries match!")
 print("UTXO structural transition/final-state refinement summaries match!")
 print("TransitionKernel per-case structured witnesses match!")
-print("PO-6 UTXO-domain invariant per-case witnesses match!")
+print("PO-6 UTXO-domain/value invariant per-case witnesses match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
 print("PO-5: Coq txid/UTXO structural transition/final-state model ↔ Rust structural entrypoint extraction-boundary evidence")
 print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
-print("PO-6: Coq structural UTXO-domain invariant theorem ↔ Rust final-state invariant witness evidence")
+print("PO-6: Coq structural UTXO-domain/value invariant theorems ↔ Rust final-state invariant witness evidence")
 PYEOF
 
 echo ""
@@ -384,8 +384,8 @@ echo "  PO-5 (Kernel adapter):     COQ-EXTRACTED ORACLE VS RUST TRANSITIONKERNEL
 echo "  PO-5 (Txid compiled):      RUN ./verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
 echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION/FINAL-STATE VALIDATION"
 echo "  PO-5 (Kernel compiled):    RUN ./verify_transition_kernel_refinement.sh FOR RELEASE-BINARY TRANSITIONKERNEL VALIDATION"
-echo "  PO-6 (Invariant model):    COQ STRUCTURAL UTXO-DOMAIN PRESERVATION THEOREM UNDER EXPLICIT FRESH-ID PRECONDITION"
-echo "  PO-6 (Invariant bridge):   COQ-EXTRACTED VS RUST PER-CASE UTXO-DOMAIN INVARIANT WITNESSES"
+echo "  PO-6 (Invariant model):    COQ STRUCTURAL UTXO-DOMAIN PRESERVATION + TOTAL-VALUE NON-INCREASE THEOREMS UNDER EXPLICIT FRESH-ID PRECONDITION"
+echo "  PO-6 (Invariant bridge):   COQ-EXTRACTED VS RUST PER-CASE UTXO-DOMAIN/VALUE INVARIANT WITNESSES"
 echo "  PO-6 (Compiled artifact):  RUN ./verify_transition_invariant_refinement.sh FOR RELEASE-BINARY INVARIANT VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"

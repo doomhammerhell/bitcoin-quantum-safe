@@ -7,8 +7,8 @@ Sighash v2 transcript/preimage serialization, separated from the SHA-256
 collision-resistance axiom. For PO-5 it covers txid preimage serialization,
 structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
-against the deployed Rust transition functions, plus PO-6 UTXO-domain invariant
-witness refinement under the explicit Coq fresh-id theorem boundary, plus direct
+against the deployed Rust transition functions, plus PO-6 UTXO-domain/value
+invariant witness refinement under the explicit Coq fresh-id theorem boundary, plus direct
 `CoqExtractedTransitionKernel` per-case report refinement against the Rust
 `DeployedTransitionKernel` adapter. The repository-level source
 proof layer is the Kani harness set in `../../../src`: PO-8 parser/layout
@@ -76,7 +76,7 @@ validation is `../../../verify_runtime_refinement.sh`.
   `UTXOTransitions.v`: lookup/remove/add/delta, duplicate-input detection,
   input/output value sums, migration/freeze checks, structural `valid_tx`,
   structural `valid_block`, executable block-application final-state
-  transformers, and cost functions.
+  transformers, domain/value invariant observers, and cost functions.
 - `ExtractTransitionVectors.v` is the extraction driver that generates
   `transition_extracted.ml`.
 - `transition_refinement.ml` summarizes the extracted transition behavior over
@@ -91,10 +91,11 @@ validation is `../../../verify_runtime_refinement.sh`.
   witnesses. It reports mismatches by transaction/block case name and nested
   field path instead of relying on hash summaries or full-object dumps.
 - `transition_invariant_refinement.ml` exposes the PO-6 UTXO-domain preservation
-  theorem boundary as per-case structured witnesses. It reports pre-state domain
-  uniqueness, fresh-id/domain-bound applicability, accepted/rejected block
-  results, final-state domain observations, spent-input absence, and explicit
-  non-applicability reasons for freshness-boundary cases. The matching Rust
+  and total-value non-increase theorem boundary as per-case structured
+  witnesses. It reports pre-state domain uniqueness, pre-state total value,
+  fresh-id/domain-bound applicability, accepted/rejected block results,
+  final-state domain observations, final-state total value, spent-input
+  absence, and explicit non-applicability reasons for freshness-boundary cases. The matching Rust
   executable is `examples/generate_transition_invariant_refinement.rs`.
 - `compare_transition_invariant_refinement.py` is the semantic comparator for
   the PO-6 invariant witnesses. It reports mismatches by block case name and
@@ -195,19 +196,27 @@ references. This narrows the txid/store implementation boundary, but it is not a
 proof of SHA-256 primitive correctness, store backend internals, or compiler
 output.
 
-### PO-6 UTXO-Domain Invariant Scope
+### PO-6 UTXO-Domain/Value Invariant Scope
 
-PO-6 now has a Coq theorem over the structural UTXO-domain invariant in addition
-to TLC finite-state model checking. `UTXOTransitions.v` defines the abstract
-domain of an association-list UTXO set and proves that accepted structural block
-application preserves a duplicate-free final domain below the next fresh-id
-bound:
+PO-6 now has Coq theorems over the structural UTXO-domain invariant and the
+total-value non-increase invariant in addition to TLC finite-state model
+checking. `UTXOTransitions.v` defines the abstract domain and total value of an
+association-list UTXO set and proves that accepted structural block application
+preserves a duplicate-free final domain below the next fresh-id bound and cannot
+increase total UTXO value:
 
 - initial UTXO domain has no duplicate abstract outpoint IDs;
 - every initial outpoint ID is strictly below the fresh-id base;
 - `apply_valid_block_structural` accepts and returns a final state;
 - the final UTXO domain remains duplicate-free and below
   `fresh_id + block_output_count block`.
+- the final UTXO total value is less than or equal to the initial UTXO total
+  value.
+
+The economic theorem is non-increase, not exact equality. The structural
+transaction rule permits implicit fee burn through `sum(outputs) <= sum(inputs)`;
+therefore exact monetary-supply/fee accounting is a separate specification layer
+if the protocol later requires it.
 
 The extraction harness intentionally makes this precondition visible. Cases with
 missing inputs or intra-block double spends are rejected-block witnesses; cases
@@ -223,9 +232,10 @@ witness executable, compares it against
 `compare_transition_invariant_refinement.py`, and emits
 `target/transition-invariant-refinement/transition_invariant_refinement_certificate.json`
 with toolchain, input, binary, and generated-output hashes. This is operational
-evidence for the structural-domain invariant boundary; it is not a proof of
-full consensus invariant preservation, cryptographic witness verification,
-txid collision resistance, store backend internals, or compiler correctness.
+evidence for the structural-domain/value invariant boundary; it is not a proof
+of full consensus invariant preservation, cryptographic witness verification,
+txid collision resistance, store backend internals, exact monetary-supply/fee
+accounting beyond the structural non-increase theorem, or compiler correctness.
 
 ### PO-8 Witness Encoding Scope
 
@@ -300,7 +310,7 @@ pattern for the PO-5 transition/final-state refinement executable.
 `verify_transition_kernel_refinement.sh` performs the same validation pattern for
 the PO-5 TransitionKernel per-case report executable.
 `verify_transition_invariant_refinement.sh` performs the same validation pattern
-for the PO-6 UTXO-domain invariant witness executable. These give auditable
+for the PO-6 UTXO-domain/value invariant witness executable. These give auditable
 translation-validation artifacts for the produced binaries. The runtime
 refinement validator follows the same certificate pattern for txid/store runtime
 behavior, while still leaving compiler correctness outside the current artifact

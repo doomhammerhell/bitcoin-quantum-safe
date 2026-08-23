@@ -309,6 +309,10 @@ fn pre_domain_ids(case: &BlockCase) -> Vec<AbstractId> {
     case.utxo.iter().map(|(id, _)| *id).collect()
 }
 
+fn utxo_total_value(utxo: &UtxoSet) -> u64 {
+    utxo.values().map(|output| output.value).sum()
+}
+
 fn present_abstract_ids(
     observed_ids: &[AbstractId],
     projection: &OutpointProjection,
@@ -412,6 +416,7 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
     let output_count = block_output_count(case);
     let next_fresh_id = case.fresh_id + output_count;
     let pre_domain = pre_domain_ids(case);
+    let pre_total_value = utxo_total_value(&utxo);
     let pre_domain_unique = !has_duplicate_ids(&pre_domain);
     let pre_domain_below_fresh = pre_domain.iter().all(|id| *id < case.fresh_id);
     let freshness_precondition = pre_domain_unique && pre_domain_below_fresh;
@@ -436,10 +441,18 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
                 .unwrap_or(true)
         })
     });
+    let final_total_value = observed_final.map(utxo_total_value);
+    let final_total_value_lte_pre =
+        final_total_value.map(|total_value| total_value <= pre_total_value);
 
     let theorem_applicable = freshness_precondition && final_state.is_some();
     let theorem_conclusion_holds = if theorem_applicable {
         Some(final_domain_unique == Some(true) && final_domain_below_next_fresh == Some(true))
+    } else {
+        None
+    };
+    let value_theorem_conclusion_holds = if theorem_applicable {
+        Some(final_total_value_lte_pre == Some(true))
     } else {
         None
     };
@@ -453,6 +466,7 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
         "next_fresh_id": next_fresh_id,
         "observed_ids": case.observed_ids,
         "pre_domain": pre_domain,
+        "pre_total_value": pre_total_value,
         "pre_state": observed_state(&case.observed_ids, &projection, &utxo),
         "block": block_json(&block, &projection),
         "spent_input_ids": spent_inputs,
@@ -469,11 +483,19 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
             "final_domain_unique": final_domain_unique,
             "final_domain_below_next_fresh": final_domain_below_next_fresh,
             "spent_inputs_absent": spent_inputs_absent,
+            "final_total_value": final_total_value,
+            "final_total_value_lte_pre": final_total_value_lte_pre,
         },
         "theorem": {
             "name": "apply_valid_block_structural_preserves_domain_nodup",
             "applicable": theorem_applicable,
             "conclusion_holds": theorem_conclusion_holds,
+            "non_applicability_reason": boundary_reason(freshness_precondition, final_state.as_ref()),
+        },
+        "value_theorem": {
+            "name": "apply_valid_block_structural_preserves_total_value",
+            "applicable": theorem_applicable,
+            "conclusion_holds": value_theorem_conclusion_holds,
             "non_applicability_reason": boundary_reason(freshness_precondition, final_state.as_ref()),
         },
     })
@@ -487,9 +509,9 @@ fn main() {
         .map(|(index, case)| case_json(index, case))
         .collect();
     let output = json!({
-        "model": "utxo-domain-invariant-refinement",
+        "model": "utxo-domain-and-value-invariant-refinement",
         "evidence": "per-case-structured-invariant-witnesses",
-        "proof_boundary": "Coq theorem apply_valid_block_structural_preserves_domain_nodup under explicit fresh-id/domain-bound precondition",
+        "proof_boundary": "Coq theorems apply_valid_block_structural_preserves_domain_nodup and apply_valid_block_structural_preserves_total_value under explicit fresh-id/domain-bound precondition",
         "case_count": cases.len(),
         "cases": case_values,
     });
