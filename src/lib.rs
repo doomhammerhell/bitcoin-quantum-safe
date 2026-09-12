@@ -16,6 +16,9 @@ pub mod encoding;
 /// SpendPred_PQ: post-quantum spend predicate (single-sig and multisig).
 pub mod spend_pred;
 
+/// Standards-aligned PQ signature suite profile and consensus activation guard.
+pub mod pq_profile;
+
 /// Sighash v2 computation with PQ-specific domain separation.
 pub mod sighash;
 
@@ -51,6 +54,15 @@ pub use encoding::{
 
 // Spend predicates (Req 2.4–2.9, 6.2, 6.5, 6.6, 6.8)
 pub use spend_pred::{spend_pred_pq, spend_pred_pq_multisig};
+
+// PQ signature suite profile and activation guard
+pub use pq_profile::{
+    active_suite_is_standards_aligned, all_signature_profiles, consensus_supported_public_key_len,
+    consensus_supported_signature_scheme, fallback_signature_scheme,
+    implemented_signature_profiles, primary_signature_scheme, profile_fits_consensus_witness_cap,
+    profile_for_scheme, scheme_for_witness_lengths, witness_size_for_profile, PqAssumptionFamily,
+    PqSchemeProfile, PqSchemeRole, PqSignatureScheme, PqStandard,
+};
 
 // Sighash v2 (Req 2.8, 10.2)
 pub use sighash::{sighash_v2, tagged_hash, verify_sighash_commitment_property};

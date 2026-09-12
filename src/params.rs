@@ -302,15 +302,15 @@ mod tests {
 
     #[test]
     fn ml_dsa_44_single_sig_witness_fits() {
-        // varint(1312) = 3 bytes (0xFD prefix) + 1312 pk + 2420 sig = 3735
-        let witness_size = 3 + ML_DSA_44_PK_LEN + ML_DSA_44_SIG_LEN;
+        // varint(1312) + pk + varint(2420) + sig = 3738 bytes.
+        let witness_size = 3 + ML_DSA_44_PK_LEN + 3 + ML_DSA_44_SIG_LEN;
         assert!(witness_size <= MAX_WITNESS_SIZE);
     }
 
     #[test]
     fn slh_dsa_128s_single_sig_witness_fits() {
-        // varint(32) = 1 byte + 32 pk + 7856 sig = 7889
-        let witness_size = 1 + SLH_DSA_128S_PK_LEN + SLH_DSA_128S_SIG_LEN;
+        // varint(32) + pk + varint(7856) + sig = 7892 bytes.
+        let witness_size = 1 + SLH_DSA_128S_PK_LEN + 3 + SLH_DSA_128S_SIG_LEN;
         assert!(witness_size <= MAX_WITNESS_SIZE);
     }
 }

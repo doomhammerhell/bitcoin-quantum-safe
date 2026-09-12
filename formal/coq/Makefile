@@ -2,7 +2,7 @@ COQC = coqc
 COQFLAGS = -Q . BitcoinPQ
 
 # Core verification modules
-SOURCES = SpendPredPQ.v UTXOTransitions.v VarintConcrete.v SighashV2.v TxidPreimage.v
+SOURCES = PQProfile.v SpendPredPQ.v UTXOTransitions.v VarintConcrete.v SighashV2.v TxidPreimage.v
 OBJECTS = $(SOURCES:.v=.vo)
 
 # Extraction modules (require all others)
@@ -79,6 +79,7 @@ verify: all
 	@echo "PO-6 (Invariant Pres.):    STRUCTURAL UTXO-DOMAIN THEOREM (UTXOTransitions.vo); invariant witness refinement via build_extraction.sh"
 	@echo "PO-7 (Cost Boundedness):   VERIFIED (UTXOTransitions.vo)"
 	@echo "PO-8 (Correspondence):     BOUNDED EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT"
+	@echo "PQ Profile Boundary:       VERIFIED (PQProfile.vo); FIPS 204 primary + FIPS 205 reserved fallback activation guard"
 
 clean:
 	rm -f *.vo *.vok *.vos *.glob .*.aux

@@ -16,6 +16,7 @@ README files, Coq modules, Rust tests, and CI.
 | Model-checked + structural Coq invariant theorem + operational refinement evidence | TLC checks the finite transition models, Coq proves the named structural invariants over the extracted UTXO transition model under explicit preconditions, and Coq-extracted invariant witnesses are compared against Rust structural final-state witnesses and release binaries over deterministic edge-case and boundary matrices. This strengthens invariant preservation evidence without claiming txid collision resistance, backend-map correctness, full consensus cryptographic validation, compiler correctness, or unrestricted source-level refinement. |
 | Conditional/executable evidence | The theorem shape is formalized, but the proof depends on explicit axioms, admitted statements, or executable tests of the concrete implementation. |
 | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | The bounded Coq parser/serializer model is machine-checked for canonicality/injectivity, the Coq-extracted varint encoder/decoder is exhaustively compared with Rust over `0..=65535`, witness serialization is compared byte-for-byte over explicit golden vectors, a witness-level refinement matrix plus symbolic bounded state-space compares Coq-extracted `serialize`/`parse`/consensus-domain parse/canonicality/operational-trace behavior against the Rust functions, Kani verifies bounded symbolic harnesses over the deployed Rust parser source, and release binaries are built and required to reproduce the Coq-extracted PO-8 summaries with source/binary hashes recorded in a certificate. This is stronger than source-only evidence, but it is not a proof of `rustc`, LLVM, linker, CPU, or OS correctness. |
+| Verified profile boundary | Machine-checked Coq invariants and Rust tests enforce that tracked post-quantum signature profiles are standards-aligned, fit the consensus witness cap, and do not become consensus-enabled without an implemented verifier/refinement boundary. This is metadata/control-plane verification, not a proof of cryptographic primitive security. |
 | Open | The intended property is documented but not yet discharged by a formal artifact. |
 
 ## Obligation Status
@@ -30,6 +31,33 @@ README files, Coq modules, Rust tests, and CI.
 | PO-6 | Invariant preservation | UTXO structural invariants must survive valid transitions. | Model-checked + structural Coq invariant theorem + operational refinement evidence | `formal/tla/BitcoinPQ.tla`, `formal/tla/BitcoinPQMulti.tla`, `formal/coq/UTXOTransitions.v`, `formal/coq/extraction/TransitionExtraction.v`, `formal/coq/extraction/transition_invariant_refinement.ml`, `examples/generate_transition_invariant_refinement.rs`, `compare_transition_invariant_refinement.py`, `verify_transition_invariant_refinement.sh` | TLC covers the configured finite state spaces: single-input and multi-input models. Coq now proves `apply_valid_block_structural_preserves_domain_nodup`: if the initial abstract UTXO domain is duplicate-free and every pre-state outpoint is below the fresh-id base, then accepted structural block application preserves a duplicate-free final UTXO domain below `fresh_id + block_output_count block`. Coq also proves `apply_valid_block_structural_preserves_total_value`: under the same duplicate-free domain/fresh-id preconditions, accepted structural block application cannot increase `utxo_total_value`. The extraction layer emits per-case structured invariant witnesses for empty blocks, accepted spends, PQ structural-boundary spends, rejected blocks, sequential intra-block dependencies, double-spend rejection, fresh-id/collision-boundary non-applicability cases, and pre/post total-value observations. CI compares those witnesses against Rust structural final-state behavior and `verify_transition_invariant_refinement.sh` validates the optimized release binary with source/binary/output hashes. This is a structural-domain and value-non-increase invariant theorem plus operational bridge, not a proof of SHA-256 txid collision resistance, runtime store backend internals, exact monetary-supply/fee accounting beyond `outputs <= inputs`, PQ witness cryptographic verification, compiler/toolchain correctness, or full unrestricted consensus-invariant preservation. | Extend Coq invariant preservation to freeze/migration monotonicity and full consensus `valid_block` with witness verification; close txid freshness through a verified hash/collision-resistance bridge or verified extracted transition core. |
 | PO-7 | Cost boundedness | PQ validation cost must remain within the block resource model. | Verified | `formal/coq/UTXOTransitions.v`, `src/weight.rs` | Coq proves exact equality for the modeled cost/weight function. | Maintain alignment if witness accounting or block cost constants change. |
 | PO-8 | Implementation correspondence | The mechanized witness encoding model must correspond to bytes accepted/generated by implementation code. | Bounded extraction evidence + source-level bounded Rust refinement + compiled-artifact validation | `formal/coq/VarintConcrete.v`, `formal/coq/extraction/*`, `build_extraction.sh`, `verify_source_refinement.sh`, `verify_compiled_refinement.sh`, `compare_vectors.py`, `examples/generate_varint_refinement.rs`, `examples/generate_witness_refinement.rs`, `tests/po8_golden_vectors.rs`, `src/encoding.rs`, `src/kani_proofs.rs`, `src/params.rs` | Coq models CompactSize only for `0..=65535`. Rust implements `0xFE`/`0xFF`, but `MAX_WITNESS_SIZE = 16000 <= 65535`; Coq proves concrete bounded parser/serializer canonicality, parse injectivity, capped witness component bounds, and soundness of the extracted consensus-domain parser/canonicality predicates; Rust exposes and uses `parse_consensus_witness` / `is_canonical_consensus_witness`; CI exhaustively compares Coq-extracted varint encode/decode with Rust for all modeled values, CI compares Coq-extracted witness serialize/parse/consensus-domain parse/canonicality/operational-trace behavior against Rust over deterministic boundary/rejection cases plus 111,111 symbolic witnesses over the modeled-domain byte alphabet, CI runs Kani source-level bounded harnesses over the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard, and CI builds release refinement binaries whose outputs must match the Coq-extracted summaries while emitting a hash certificate. | Full compiler-correctness proof remains open. Full CompactSize mechanization is optional for consensus-valid witness components while the witness cap remains below `65535`, but required if the cap is raised or if general-purpose CompactSize is claimed as verified. |
+
+## Cryptographic Suite Profile Boundary
+
+The project now separates signature-suite profiling from consensus activation.
+`src/pq_profile.rs` tracks the deployed ML-DSA-44/FIPS 204 verifier and the
+reserved SLH-DSA-128s/FIPS 205 fallback profile. Both profiles are dimensioned
+under the real witness serializer, including both CompactSize length prefixes:
+ML-DSA-44 is 3738 bytes and SLH-DSA-128s is 7892 bytes. Both fit the current
+16000-byte witness cap.
+
+The activation rule is stricter than the profile table. `spend_pred_pq` accepts
+only a scheme whose public-key and signature lengths identify a profile with an
+implemented verifier. Today that is ML-DSA-44 only. The SLH-DSA-128s profile is
+kept as a conservative hash-based fallback for agility and cost modeling, but it
+does not widen the consensus accept set. Multisig also rejects committed public
+keys outside the active consensus profile, preventing a heterogeneous or
+partially unimplemented key set from being treated as an ML-DSA-44 policy.
+
+`formal/coq/PQProfile.v` proves the corresponding profile facts:
+`ml_dsa_44_witness_size`, `slh_dsa_128s_witness_size`,
+`tracked_profiles_fit_current_consensus_cap`, `primary_verifier_implemented`,
+`fallback_reserved_until_verifier_exists`, `standards_are_distinct`,
+`assumption_families_are_distinct`, and
+`primary_scheme_is_only_consensus_enabled_scheme`. This is deliberately a
+profile/control-plane proof. It does not prove FIPS 204 or FIPS 205
+cryptographic security, implementation correctness of the underlying signature
+libraries, or compiler/toolchain correctness.
 
 ## PO-4 Boundary
 

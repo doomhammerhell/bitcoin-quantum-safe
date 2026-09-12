@@ -2,7 +2,8 @@
 
 Machine-checked and executable-evidence artifacts for the PQ witness protocol.
 The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-6, PO-7, and
-the bounded varint/canonical witness discharge used for PO-8 evidence. PO-4 is
+the bounded varint/canonical witness discharge used for PO-8 evidence, plus a
+standards-aligned cryptographic suite profile/activation boundary. PO-4 is
 proved for the Coq sighash model under the SHA-256 collision-resistance axiom
 and now includes a Coq-extracted transcript constructor compared against the
 Rust preimage serialization path. PO-5 now includes a mechanized
@@ -43,6 +44,26 @@ The repository-level proof-status ledger is
 | `spend_pred_pq_none_is_false` | — | Parse failure implies rejection |
 | `spend_pred_pq_hash_mismatch` | — | Hash mismatch implies rejection |
 | `spend_pred_pq_vfy_fail` | — | Verification failure implies rejection |
+
+### PQ Profile: Suite Activation Boundary
+
+| Theorem | Status | Property |
+|---|---|---|
+| `ml_dsa_44_witness_size` | Verified | ML-DSA-44 single-signature witness size is 3738 bytes including both CompactSize prefixes |
+| `slh_dsa_128s_witness_size` | Verified | SLH-DSA-128s fallback-profile witness size is 7892 bytes including both CompactSize prefixes |
+| `tracked_profiles_fit_current_consensus_cap` | Verified | Every tracked profile fits the current 16000-byte witness cap |
+| `primary_verifier_implemented` | Verified | The current primary suite has an implemented verifier |
+| `fallback_reserved_until_verifier_exists` | Verified | The FIPS 205 fallback profile is not consensus-enabled without a verifier |
+| `standards_are_distinct` | Verified | The primary and fallback standards are distinct |
+| `assumption_families_are_distinct` | Verified | The primary and fallback assumption families are distinct |
+| `primary_scheme_is_only_consensus_enabled_scheme` | Verified | Among tracked profiles, only ML-DSA-44 is consensus-enabled today |
+
+`PQProfile.v` is intentionally not a cryptographic security proof for ML-DSA or
+SLH-DSA. It formalizes the profile metadata and activation guard that the Rust
+implementation enforces in `../../src/pq_profile.rs` and `../../src/spend_pred.rs`.
+This prevents standards-aligned fallback metadata from silently widening the
+consensus accept set before the corresponding verifier and refinement artifacts
+exist.
 
 ### PO-4: Sighash Commitment (SighashV2.v) — Verified Model + Transcript Refinement
 

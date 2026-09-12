@@ -22,6 +22,7 @@ echo "=========================================="
 
 # Step 1: Compile base modules first
 echo "[1/5] Compiling base Coq modules..."
+coqc -Q . BitcoinPQ PQProfile.v
 coqc -Q . BitcoinPQ VarintConcrete.v
 coqc -Q . BitcoinPQ SpendPredPQ.v
 coqc -Q . BitcoinPQ UTXOTransitions.v
@@ -346,6 +347,7 @@ print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization eviden
 print("PO-5: Coq txid/UTXO structural transition/final-state model ↔ Rust structural entrypoint extraction-boundary evidence")
 print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
 print("PO-6: Coq structural UTXO-domain/value invariant theorems ↔ Rust final-state invariant witness evidence")
+print("PQ Profile: FIPS 204 primary + FIPS 205 reserved fallback activation boundary compiled in Coq and enforced in Rust")
 PYEOF
 
 echo ""
@@ -391,4 +393,5 @@ echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"
 echo "  PO-8 (Rust source):        RUN ./verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"
 echo "  PO-8 (Compiled artifact):  RUN ./verify_compiled_refinement.sh FOR RELEASE-BINARY TRANSLATION VALIDATION"
+echo "  PQ Profile Boundary:       VERIFIED PROFILE GUARD (FIPS 204 PRIMARY, FIPS 205 RESERVED FALLBACK)"
 echo ""

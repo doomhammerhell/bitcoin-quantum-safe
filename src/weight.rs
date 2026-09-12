@@ -179,16 +179,16 @@ mod tests {
 
     #[test]
     fn cost_input_ml_dsa_44_witness() {
-        // ML-DSA-44 witness: ~3,734 bytes
-        let witness = vec![0u8; 3_734];
-        assert_eq!(cost_input(&witness), 3_734 + INPUT_OVERHEAD_WU);
+        // ML-DSA-44 witness: 3738 bytes including both CompactSize prefixes.
+        let witness = vec![0u8; 3_738];
+        assert_eq!(cost_input(&witness), 3_738 + INPUT_OVERHEAD_WU);
     }
 
     #[test]
     fn cost_input_slh_dsa_128s_witness() {
-        // SLH-DSA-128s witness: ~7,890 bytes
-        let witness = vec![0u8; 7_890];
-        assert_eq!(cost_input(&witness), 7_890 + INPUT_OVERHEAD_WU);
+        // SLH-DSA-128s witness: 7892 bytes including both CompactSize prefixes.
+        let witness = vec![0u8; 7_892];
+        assert_eq!(cost_input(&witness), 7_892 + INPUT_OVERHEAD_WU);
     }
 
     // -- base_weight tests --
@@ -215,8 +215,8 @@ mod tests {
 
     #[test]
     fn cost_tx_single_input_single_output() {
-        let tx = make_tx(&[3_734], 1);
-        let expected = (3_734 + INPUT_OVERHEAD_WU) + BASE_TX_OVERHEAD_WU + OUTPUT_WU;
+        let tx = make_tx(&[3_738], 1);
+        let expected = (3_738 + INPUT_OVERHEAD_WU) + BASE_TX_OVERHEAD_WU + OUTPUT_WU;
         assert_eq!(cost_tx(&tx), expected);
     }
 
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn check_block_cost_exceeds_limit() {
         // Fill a block well beyond C_MAX.
-        let tx = make_tx(&[3_734], 1);
+        let tx = make_tx(&[3_738], 1);
         let tx_cost = cost_tx(&tx);
         let count = (C_MAX / tx_cost) as usize + 100;
         let block: Block = vec![tx; count];
@@ -330,17 +330,16 @@ mod tests {
 
     #[test]
     fn ml_dsa_44_witness_weight_contribution() {
-        // ML-DSA-44 witness: ~3,734 bytes → 3,734 WU at 1 WU/byte
-        let witness = vec![0u8; 3_734];
-        // cost_input = witness_len + overhead = 3734 + 144 = 3878
-        assert_eq!(cost_input(&witness), 3_878);
+        // ML-DSA-44 witness: 3738 bytes -> 3738 WU at 1 WU/byte.
+        let witness = vec![0u8; 3_738];
+        assert_eq!(cost_input(&witness), 3_738 + INPUT_OVERHEAD_WU);
     }
 
     #[test]
     fn slh_dsa_128s_witness_weight_contribution() {
-        // SLH-DSA-128s witness: ~7,890 bytes → 7,890 WU at 1 WU/byte
-        let witness = vec![0u8; 7_890];
-        assert_eq!(cost_input(&witness), 7_890 + 144);
+        // SLH-DSA-128s witness: 7892 bytes -> 7892 WU at 1 WU/byte.
+        let witness = vec![0u8; 7_892];
+        assert_eq!(cost_input(&witness), 7_892 + INPUT_OVERHEAD_WU);
     }
 
     #[test]

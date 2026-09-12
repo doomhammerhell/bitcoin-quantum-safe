@@ -2382,10 +2382,10 @@ fn po8_spend_pred_iff_backward_vfy_failure() {
 fn po8_cost_equals_weight_correspondence() {
     // Test several transaction configurations
     let test_cases: Vec<(Vec<usize>, usize)> = vec![
-        (vec![3734], 1),          // ML-DSA-44 single-sig
-        (vec![7890], 1),          // SLH-DSA-128s single-sig
+        (vec![3738], 1),          // ML-DSA-44 single-sig
+        (vec![7892], 1),          // SLH-DSA-128s single-sig
         (vec![8786], 1),          // 2-of-3 multisig
-        (vec![3734, 3734], 2),    // 2-input, 2-output
+        (vec![3738, 3738], 2),    // 2-input, 2-output
         (vec![100], 1),           // small witness
         (vec![16000], 1),         // max witness
         (vec![1, 1, 1, 1, 1], 5), // many small inputs

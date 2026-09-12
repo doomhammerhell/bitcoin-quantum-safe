@@ -8,6 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::encoding::{parse_consensus_witness, parse_multisig_witness, serialize_witness};
 use crate::params::MAX_WITNESS_SIZE;
+use crate::pq_profile::{
+    consensus_supported_public_key_len, consensus_supported_signature_scheme, PqSignatureScheme,
+};
 use crate::types::Commitment;
 
 /// Evaluate the PQ spend predicate for a single-signature witness.
@@ -63,7 +66,13 @@ pub fn spend_pred_pq(commitment: &Commitment, message: &[u8], witness: &[u8]) ->
         return false;
     }
 
-    // Step 5: Signature verification using ML-DSA-44 (FIPS 204) (Req 2.6)
+    // Step 5: Suite activation guard — only implemented verifiers are accepted.
+    if consensus_supported_signature_scheme(pk.len(), sig.len()) != Some(PqSignatureScheme::MlDsa44)
+    {
+        return false;
+    }
+
+    // Step 6: Signature verification using ML-DSA-44 (FIPS 204) (Req 2.6)
     use fips204::ml_dsa_44;
     use fips204::traits::{SerDes, Verifier};
 
@@ -138,7 +147,16 @@ pub fn spend_pred_pq_multisig(commitment: &Commitment, message: &[u8], witness: 
         return false;
     }
 
-    // Step 4: Verify k signatures against the selected public keys (Req 6.2)
+    // Step 4: Suite activation guard — every committed key must belong to the
+    // current consensus-enabled profile, and each checked signature must match it.
+    if pks
+        .iter()
+        .any(|pk| !consensus_supported_public_key_len(pk.len()))
+    {
+        return false;
+    }
+
+    // Step 5: Verify k signatures against the selected public keys (Req 6.2)
     use fips204::ml_dsa_44;
     use fips204::traits::{SerDes, Verifier};
 
@@ -146,6 +164,12 @@ pub fn spend_pred_pq_multisig(commitment: &Commitment, message: &[u8], witness: 
         let pk_idx = indices[i] as usize;
         let pk_bytes = &pks[pk_idx];
         let sig_bytes = &sigs[i];
+
+        if consensus_supported_signature_scheme(pk_bytes.len(), sig_bytes.len())
+            != Some(PqSignatureScheme::MlDsa44)
+        {
+            return false;
+        }
 
         let pk_array: [u8; 1312] = match pk_bytes.as_slice().try_into() {
             Ok(a) => a,
@@ -183,6 +207,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use crate::encoding::serialize_witness;
+    use crate::params::{SLH_DSA_128S_PK_LEN, SLH_DSA_128S_SIG_LEN};
 
     /// Helper: generate a valid (commitment, witness) pair for a given message.
     fn make_valid_spend(message: &[u8]) -> (Commitment, Vec<u8>) {
@@ -301,6 +326,17 @@ mod tests {
         assert!(!spend_pred_pq(&commitment, b"msg", &witness));
     }
 
+    #[test]
+    fn spend_pred_pq_rejects_slh_dsa_profile_until_verifier_is_enabled() {
+        let pk = vec![0x42; SLH_DSA_128S_PK_LEN];
+        let sig = vec![0x99; SLH_DSA_128S_SIG_LEN];
+        let commitment: Commitment = Sha256::digest(&pk).into();
+        let witness = serialize_witness(&pk, &sig);
+
+        assert!(witness.len() <= MAX_WITNESS_SIZE);
+        assert!(!spend_pred_pq(&commitment, b"msg", &witness));
+    }
+
     // -- Determinism (PO-2) --
 
     #[test]
@@ -326,6 +362,7 @@ mod multisig_tests {
     use sha2::{Digest, Sha256};
 
     use crate::encoding::serialize_multisig_witness;
+    use crate::params::SLH_DSA_128S_PK_LEN;
 
     /// Helper: generate n ML-DSA-44 keypairs and return (pk_bytes_vec, sk_vec).
     fn make_keypairs(n: usize) -> (Vec<Vec<u8>>, Vec<ml_dsa_44::PrivateKey>) {
@@ -439,5 +476,17 @@ mod multisig_tests {
         let oversized = vec![0u8; MAX_WITNESS_SIZE + 1];
         let commitment = [0u8; 32];
         assert!(!spend_pred_pq_multisig(&commitment, b"msg", &oversized));
+    }
+
+    #[test]
+    fn spend_pred_pq_multisig_rejects_reserved_unimplemented_key_profile() {
+        let message = b"multisig suite profile boundary";
+        let (mut pks, sks) = make_keypairs(2);
+        pks[1] = vec![0x42; SLH_DSA_128S_PK_LEN];
+        let commitment = multisig_commitment(&pks);
+        let sig = sks[0].try_sign(message, &[]).unwrap();
+        let witness = serialize_multisig_witness(1, &pks, &[sig.to_vec()], &[0]);
+
+        assert!(!spend_pred_pq_multisig(&commitment, message, &witness));
     }
 }
