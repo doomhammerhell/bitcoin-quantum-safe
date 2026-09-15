@@ -42,7 +42,7 @@ jobs:
 
   coq:
     name: Coq proofs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +50,8 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ env.OCAML_VERSION }}
+          cache: false
+          opam-pin: false
           opam-disable-sandboxing: true
 
       - name: Install Coq

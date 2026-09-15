@@ -66,7 +66,7 @@ env:
 jobs:
   # Job 1: Extract Coq to OCaml and generate golden vectors
   extract-coq:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Extract Coq to OCaml
 
     steps:
@@ -76,7 +76,8 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ env.OCAML_VERSION }}
-          dune-cache: true
+          cache: false
+          opam-pin: false
           opam-disable-sandboxing: true
 
       - name: Setup Rust
@@ -490,7 +491,7 @@ jobs:
 
   # Job 4: Run Coq proofs
   verify-coq-proofs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Verify Coq Proofs (PO-1, PO-2, PO-3, PO-4, PO-5, PO-6, PO-7, PQ Profile)
 
     steps:
@@ -500,6 +501,8 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ env.OCAML_VERSION }}
+          cache: false
+          opam-pin: false
           opam-disable-sandboxing: true
 
       - name: Install Coq via opam
