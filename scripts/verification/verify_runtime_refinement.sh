@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="${RUNTIME_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/runtime-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"
@@ -66,7 +67,7 @@ tracked_inputs = [
     "src/lib.rs",
     "src/types.rs",
     "examples/generate_runtime_refinement.rs",
-    "verify_runtime_refinement.sh",
+    "scripts/verification/verify_runtime_refinement.sh",
 ]
 
 release_binary = "target/release/examples/generate_runtime_refinement"

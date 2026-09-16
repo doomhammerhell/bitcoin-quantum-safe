@@ -48,3 +48,6 @@ name = "generate_transition_invariant_refinement"
 
 [[example]]
 name = "generate_runtime_refinement"
+
+[[example]]
+name = "generate_pq_profile_refinement"

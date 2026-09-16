@@ -6,10 +6,13 @@ SOURCES = PQProfile.v SpendPredPQ.v UTXOTransitions.v VarintConcrete.v SighashV2
 OBJECTS = $(SOURCES:.v=.vo)
 
 # Extraction modules (require all others)
-EXTRACTION = extraction/WitnessExtraction.v extraction/SighashExtraction.v extraction/TxidExtraction.v extraction/TransitionExtraction.v
+EXTRACTION = extraction/WitnessExtraction.v extraction/SighashExtraction.v extraction/TxidExtraction.v extraction/TransitionExtraction.v extraction/PQProfileExtraction.v
 EXTRACTION_OBJ = extraction/WitnessExtraction.vo
 EXTRACTION_DRIVER = extraction/ExtractWitnessVectors.v
 EXTRACTION_DRIVER_OBJ = extraction/ExtractWitnessVectors.vo
+PQ_PROFILE_EXTRACTION_OBJ = extraction/PQProfileExtraction.vo
+PQ_PROFILE_EXTRACTION_DRIVER = extraction/ExtractPQProfileVectors.v
+PQ_PROFILE_EXTRACTION_DRIVER_OBJ = extraction/ExtractPQProfileVectors.vo
 SIGHASH_EXTRACTION_OBJ = extraction/SighashExtraction.vo
 SIGHASH_EXTRACTION_DRIVER = extraction/ExtractSighashVectors.v
 SIGHASH_EXTRACTION_DRIVER_OBJ = extraction/ExtractSighashVectors.vo
@@ -35,13 +38,19 @@ SighashV2.vo: VarintConcrete.vo SpendPredPQ.vo
 TxidPreimage.vo: SighashV2.vo
 
 # Build extraction modules
-extraction: $(OBJECTS) $(EXTRACTION_OBJ) $(EXTRACTION_DRIVER_OBJ) $(SIGHASH_EXTRACTION_OBJ) $(SIGHASH_EXTRACTION_DRIVER_OBJ) $(TXID_EXTRACTION_OBJ) $(TXID_EXTRACTION_DRIVER_OBJ) $(TRANSITION_EXTRACTION_OBJ) $(TRANSITION_EXTRACTION_DRIVER_OBJ)
+extraction: $(OBJECTS) $(EXTRACTION_OBJ) $(EXTRACTION_DRIVER_OBJ) $(PQ_PROFILE_EXTRACTION_OBJ) $(PQ_PROFILE_EXTRACTION_DRIVER_OBJ) $(SIGHASH_EXTRACTION_OBJ) $(SIGHASH_EXTRACTION_DRIVER_OBJ) $(TXID_EXTRACTION_OBJ) $(TXID_EXTRACTION_DRIVER_OBJ) $(TRANSITION_EXTRACTION_OBJ) $(TRANSITION_EXTRACTION_DRIVER_OBJ)
 
 extraction/WitnessExtraction.vo: extraction/WitnessExtraction.v $(OBJECTS)
 	cd extraction && $(COQC) -Q .. BitcoinPQ WitnessExtraction.v
 
 extraction/ExtractWitnessVectors.vo: extraction/ExtractWitnessVectors.v extraction/WitnessExtraction.vo
 	cd extraction && $(COQC) -Q .. BitcoinPQ ExtractWitnessVectors.v
+
+extraction/PQProfileExtraction.vo: extraction/PQProfileExtraction.v PQProfile.vo
+	cd extraction && $(COQC) -Q .. BitcoinPQ PQProfileExtraction.v
+
+extraction/ExtractPQProfileVectors.vo: extraction/ExtractPQProfileVectors.v extraction/PQProfileExtraction.vo
+	cd extraction && $(COQC) -Q .. BitcoinPQ ExtractPQProfileVectors.v
 
 extraction/SighashExtraction.vo: extraction/SighashExtraction.v SighashV2.vo
 	cd extraction && $(COQC) -Q .. BitcoinPQ SighashExtraction.v
@@ -63,7 +72,7 @@ extraction/ExtractTransitionVectors.vo: extraction/ExtractTransitionVectors.v ex
 
 # Extract to OCaml
 extract-ocaml: extraction
-	@echo "Generated extraction/golden_vectors_extracted.ml, extraction/sighash_extracted.ml, extraction/txid_extracted.ml, and extraction/transition_extracted.ml"
+	@echo "Generated extraction/golden_vectors_extracted.ml, extraction/pq_profile_extracted.ml, extraction/sighash_extracted.ml, extraction/txid_extracted.ml, and extraction/transition_extracted.ml"
 
 # Run all proofs
 verify: all
@@ -75,8 +84,8 @@ verify: all
 	@echo "PO-2 (Determinism):       VERIFIED (SpendPredPQ.vo)"
 	@echo "PO-3 (Parse Canonicality): VERIFIED (SpendPredPQ.vo)"
 	@echo "PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.vo + Rust PBT)"
-	@echo "PO-5 (Transition Det.):    VERIFIED MODEL (UTXOTransitions.vo); txid/transition/final-state extraction refinement via build_extraction.sh"
-	@echo "PO-6 (Invariant Pres.):    STRUCTURAL UTXO-DOMAIN THEOREM (UTXOTransitions.vo); invariant witness refinement via build_extraction.sh"
+	@echo "PO-5 (Transition Det.):    VERIFIED MODEL (UTXOTransitions.vo); txid/transition/final-state extraction refinement via scripts/verification/build_extraction.sh"
+	@echo "PO-6 (Invariant Pres.):    STRUCTURAL UTXO-DOMAIN THEOREM (UTXOTransitions.vo); invariant witness refinement via scripts/verification/build_extraction.sh"
 	@echo "PO-7 (Cost Boundedness):   VERIFIED (UTXOTransitions.vo)"
 	@echo "PO-8 (Correspondence):     BOUNDED EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT"
 	@echo "PQ Profile Boundary:       VERIFIED (PQProfile.vo); FIPS 204 primary + FIPS 205 reserved fallback activation guard"
@@ -86,9 +95,10 @@ clean:
 	rm -f *.lia.cache .lia.cache *.nia.cache .nia.cache
 	rm -f extraction/*.vo extraction/*.vok extraction/*.vos extraction/*.glob extraction/.*.aux
 	rm -f extraction/*.lia.cache extraction/.lia.cache extraction/*.nia.cache extraction/.nia.cache
-	rm -f extraction/*.cmi extraction/*.cmo extraction/golden_vectors extraction/varint_refinement extraction/witness_refinement extraction/sighash_refinement extraction/txid_refinement extraction/transition_refinement extraction/transition_kernel_refinement extraction/transition_invariant_refinement
+	rm -f extraction/*.cmi extraction/*.cmo extraction/golden_vectors extraction/varint_refinement extraction/witness_refinement extraction/sighash_refinement extraction/txid_refinement extraction/transition_refinement extraction/transition_kernel_refinement extraction/transition_invariant_refinement extraction/pq_profile_refinement
 	rm -f extraction/golden_vectors_extracted.ml extraction/golden_vectors_extracted.mli
 	rm -f extraction/sighash_extracted.ml extraction/sighash_extracted.mli
 	rm -f extraction/txid_extracted.ml extraction/txid_extracted.mli
 	rm -f extraction/transition_extracted.ml extraction/transition_extracted.mli
-	rm -f extraction/coq_varint_refinement.json extraction/coq_witness_refinement.json extraction/coq_sighash_refinement.json extraction/coq_txid_refinement.json extraction/coq_transition_refinement.json extraction/coq_transition_kernel_refinement.json extraction/coq_transition_invariant_refinement.json
+	rm -f extraction/pq_profile_extracted.ml extraction/pq_profile_extracted.mli
+	rm -f extraction/coq_varint_refinement.json extraction/coq_witness_refinement.json extraction/coq_sighash_refinement.json extraction/coq_txid_refinement.json extraction/coq_transition_refinement.json extraction/coq_transition_kernel_refinement.json extraction/coq_transition_invariant_refinement.json extraction/coq_pq_profile_refinement.json

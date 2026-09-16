@@ -16,17 +16,19 @@ on:
       - "examples/generate_transition_kernel_refinement.rs"
       - "examples/generate_transition_invariant_refinement.rs"
       - "examples/generate_runtime_refinement.rs"
-      - "build_extraction.sh"
-      - "compare_transition_kernel_refinement.py"
-      - "compare_transition_invariant_refinement.py"
-      - "verify_source_refinement.sh"
-      - "verify_compiled_refinement.sh"
-      - "verify_sighash_refinement.sh"
-      - "verify_txid_refinement.sh"
-      - "verify_transition_refinement.sh"
-      - "verify_transition_kernel_refinement.sh"
-      - "verify_transition_invariant_refinement.sh"
-      - "verify_runtime_refinement.sh"
+      - "examples/generate_pq_profile_refinement.rs"
+      - "scripts/verification/build_extraction.sh"
+      - "scripts/verification/compare_transition_kernel_refinement.py"
+      - "scripts/verification/compare_transition_invariant_refinement.py"
+      - "scripts/verification/verify_source_refinement.sh"
+      - "scripts/verification/verify_compiled_refinement.sh"
+      - "scripts/verification/verify_sighash_refinement.sh"
+      - "scripts/verification/verify_txid_refinement.sh"
+      - "scripts/verification/verify_transition_refinement.sh"
+      - "scripts/verification/verify_transition_kernel_refinement.sh"
+      - "scripts/verification/verify_transition_invariant_refinement.sh"
+      - "scripts/verification/verify_runtime_refinement.sh"
+      - "scripts/verification/verify_pq_profile_refinement.sh"
       - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
   pull_request:
@@ -44,17 +46,19 @@ on:
       - "examples/generate_transition_kernel_refinement.rs"
       - "examples/generate_transition_invariant_refinement.rs"
       - "examples/generate_runtime_refinement.rs"
-      - "build_extraction.sh"
-      - "compare_transition_kernel_refinement.py"
-      - "compare_transition_invariant_refinement.py"
-      - "verify_source_refinement.sh"
-      - "verify_compiled_refinement.sh"
-      - "verify_sighash_refinement.sh"
-      - "verify_txid_refinement.sh"
-      - "verify_transition_refinement.sh"
-      - "verify_transition_kernel_refinement.sh"
-      - "verify_transition_invariant_refinement.sh"
-      - "verify_runtime_refinement.sh"
+      - "examples/generate_pq_profile_refinement.rs"
+      - "scripts/verification/build_extraction.sh"
+      - "scripts/verification/compare_transition_kernel_refinement.py"
+      - "scripts/verification/compare_transition_invariant_refinement.py"
+      - "scripts/verification/verify_source_refinement.sh"
+      - "scripts/verification/verify_compiled_refinement.sh"
+      - "scripts/verification/verify_sighash_refinement.sh"
+      - "scripts/verification/verify_txid_refinement.sh"
+      - "scripts/verification/verify_transition_refinement.sh"
+      - "scripts/verification/verify_transition_kernel_refinement.sh"
+      - "scripts/verification/verify_transition_invariant_refinement.sh"
+      - "scripts/verification/verify_runtime_refinement.sh"
+      - "scripts/verification/verify_pq_profile_refinement.sh"
       - ".github/workflows/po8-verification.yml"
       - "Cargo.toml"
 
@@ -92,7 +96,7 @@ jobs:
 
       - name: Build extraction artifacts
         run: |
-          opam exec -- bash ./build_extraction.sh
+          opam exec -- bash ./scripts/verification/build_extraction.sh
 
       - name: Upload Coq vectors
         uses: actions/upload-artifact@v4
@@ -142,6 +146,12 @@ jobs:
           name: coq-transition-invariant-refinement
           path: formal/coq/extraction/coq_transition_invariant_refinement.json
 
+      - name: Upload Coq PQ profile refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coq-pq-profile-refinement
+          path: formal/coq/extraction/coq_pq_profile_refinement.json
+
   # Job 2: Generate Rust golden vectors
   generate-rust-vectors:
     runs-on: ubuntu-latest
@@ -165,6 +175,7 @@ jobs:
           cargo run --example generate_transition_refinement > rust_transition_refinement.json
           cargo run --example generate_transition_kernel_refinement > rust_transition_kernel_refinement.json
           cargo run --example generate_transition_invariant_refinement > rust_transition_invariant_refinement.json
+          cargo run --example generate_pq_profile_refinement > rust_pq_profile_refinement.json
 
       - name: Upload Rust vectors
         uses: actions/upload-artifact@v4
@@ -213,6 +224,12 @@ jobs:
         with:
           name: rust-transition-invariant-refinement
           path: rust_transition_invariant_refinement.json
+
+      - name: Upload Rust PQ profile refinement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-pq-profile-refinement
+          path: rust_pq_profile_refinement.json
 
   # Job 3: Compare and verify
   compare-vectors:
@@ -303,6 +320,16 @@ jobs:
         with:
           name: rust-transition-invariant-refinement
 
+      - name: Download Coq PQ profile refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-pq-profile-refinement
+
+      - name: Download Rust PQ profile refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-pq-profile-refinement
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -363,6 +390,12 @@ jobs:
 
           with open('rust_transition_invariant_refinement.json', 'r') as f:
               rust_transition_invariant = json.load(f)
+
+          with open('coq_pq_profile_refinement.json', 'r') as f:
+              coq_pq_profile = json.load(f)
+
+          with open('rust_pq_profile_refinement.json', 'r') as f:
+              rust_pq_profile = json.load(f)
 
           print(f"Coq vectors: {len(coq_data)} test cases")
           print(f"Rust vectors: {len(rust_data)} test cases")
@@ -453,7 +486,7 @@ jobs:
                   subprocess.run(
                       [
                           sys.executable,
-                          "compare_transition_kernel_refinement.py",
+                          "scripts/verification/compare_transition_kernel_refinement.py",
                           "coq_transition_kernel_refinement.json",
                           "rust_transition_kernel_refinement.json",
                       ]
@@ -466,22 +499,30 @@ jobs:
                   subprocess.run(
                       [
                           sys.executable,
-                          "compare_transition_invariant_refinement.py",
+                          "scripts/verification/compare_transition_invariant_refinement.py",
                           "coq_transition_invariant_refinement.json",
                           "rust_transition_invariant_refinement.json",
                       ]
                   ).returncode
               )
 
+          if coq_pq_profile != rust_pq_profile:
+              print("\n=== PQ PROFILE REFINEMENT MISMATCH ===")
+              print(f"Coq:  {coq_pq_profile}")
+              print(f"Rust: {rust_pq_profile}")
+              sys.exit(1)
+
           print("\n=== SUCCESS: all bounded vectors match byte-for-byte ===")
           print("=== SUCCESS: exhaustive u16 varint refinement summaries match ===")
           print("=== SUCCESS: witness parser/serializer/consensus-domain/trace refinement summaries match ===")
+          print("=== SUCCESS: PQ signature-suite profile refinement summaries match ===")
           print("=== SUCCESS: sighash transcript refinement summaries match ===")
           print("=== SUCCESS: txid preimage refinement summaries match ===")
           print("=== SUCCESS: UTXO transition/final-state refinement summaries match ===")
           print("=== SUCCESS: TransitionKernel per-case structured witnesses match ===")
           print("=== SUCCESS: PO-6 UTXO-domain/value invariant per-case witnesses match ===")
           print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
+          print("PQ Profile: Coq profile boundary ↔ Rust pq_profile.rs extraction-boundary evidence")
           print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
           print("PO-5: Coq txid/UTXO transition/final-state model ↔ Rust implementation extraction-boundary evidence")
           print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
@@ -542,7 +583,7 @@ jobs:
 
       - name: Run source-level refinement harnesses
         run: |
-          bash ./verify_source_refinement.sh
+          bash ./scripts/verification/verify_source_refinement.sh
 
   # Job 6: Validate compiled release artifacts against Coq extraction
   verify-compiled-refinement:
@@ -583,7 +624,7 @@ jobs:
 
       - name: Run compiled-artifact translation validation
         run: |
-          ./verify_compiled_refinement.sh
+          ./scripts/verification/verify_compiled_refinement.sh
 
       - name: Upload compiled refinement certificate
         uses: actions/upload-artifact@v4
@@ -618,7 +659,7 @@ jobs:
 
       - name: Run sighash transcript refinement validation
         run: |
-          ./verify_sighash_refinement.sh
+          ./scripts/verification/verify_sighash_refinement.sh
 
       - name: Upload sighash refinement certificate
         uses: actions/upload-artifact@v4
@@ -653,7 +694,7 @@ jobs:
 
       - name: Run txid preimage refinement validation
         run: |
-          ./verify_txid_refinement.sh
+          ./scripts/verification/verify_txid_refinement.sh
 
       - name: Upload txid refinement certificate
         uses: actions/upload-artifact@v4
@@ -688,7 +729,7 @@ jobs:
 
       - name: Run transition refinement validation
         run: |
-          ./verify_transition_refinement.sh
+          ./scripts/verification/verify_transition_refinement.sh
 
       - name: Upload transition refinement certificate
         uses: actions/upload-artifact@v4
@@ -723,7 +764,7 @@ jobs:
 
       - name: Run transition-kernel refinement validation
         run: |
-          ./verify_transition_kernel_refinement.sh
+          ./scripts/verification/verify_transition_kernel_refinement.sh
 
       - name: Upload transition-kernel refinement certificate
         uses: actions/upload-artifact@v4
@@ -758,7 +799,7 @@ jobs:
 
       - name: Run transition invariant refinement validation
         run: |
-          ./verify_transition_invariant_refinement.sh
+          ./scripts/verification/verify_transition_invariant_refinement.sh
 
       - name: Upload transition invariant refinement certificate
         uses: actions/upload-artifact@v4
@@ -786,7 +827,7 @@ jobs:
 
       - name: Run runtime refinement validation
         run: |
-          ./verify_runtime_refinement.sh
+          ./scripts/verification/verify_runtime_refinement.sh
 
       - name: Upload runtime refinement certificate
         uses: actions/upload-artifact@v4
@@ -794,7 +835,42 @@ jobs:
           name: runtime-refinement-certificate
           path: target/runtime-refinement/runtime_refinement_certificate.json
 
-  # Job 13: Performance benchmarks
+  # Job 13: Validate compiled PQ profile artifacts against Coq extraction
+  verify-pq-profile-refinement:
+    runs-on: ubuntu-latest
+    name: Verify PQ Profile Refinement
+    needs: [extract-coq]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download Coq PQ profile refinement summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coq-pq-profile-refinement
+          path: formal/coq/extraction
+
+      - name: Run PQ profile refinement validation
+        run: |
+          ./scripts/verification/verify_pq_profile_refinement.sh
+
+      - name: Upload PQ profile refinement certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pq-profile-refinement-certificate
+          path: target/pq-profile-refinement/pq_profile_refinement_certificate.json
+
+  # Job 14: Performance benchmarks
   run-benchmarks:
     runs-on: ubuntu-latest
     name: ML-DSA-44 Performance Benchmarks
@@ -847,7 +923,7 @@ jobs:
   verification-summary:
     runs-on: ubuntu-latest
     name: PO-4/PO-5/PO-6/PO-8 Verification Summary
-    needs: [compare-vectors, verify-coq-proofs, verify-rust-source-refinement, verify-compiled-refinement, verify-sighash-refinement, verify-txid-refinement, verify-transition-refinement, verify-transition-kernel-refinement, verify-transition-invariant-refinement, verify-runtime-refinement, run-benchmarks]
+    needs: [compare-vectors, verify-coq-proofs, verify-rust-source-refinement, verify-compiled-refinement, verify-sighash-refinement, verify-txid-refinement, verify-transition-refinement, verify-transition-kernel-refinement, verify-transition-invariant-refinement, verify-runtime-refinement, verify-pq-profile-refinement, run-benchmarks]
     if: always()
 
     steps:
@@ -874,14 +950,15 @@ jobs:
           echo "✓ Compiled TransitionKernel report artifact validation: VERIFIED"
           echo "✓ Compiled PO-6 UTXO-domain/value invariant artifact validation: VERIFIED"
           echo "✓ Compiled runtime txid/store refinement artifact validation: VERIFIED"
+          echo "✓ Compiled PQ profile artifact validation: VERIFIED"
           echo "✓ Bounded golden vector generation: COMPLETED"
           echo "✓ Coq-extracted serializer vs Rust comparison: COMPLETED"
           echo "✓ Coq proofs (PO-1, PO-2, PO-3, PO-4 model, PO-5, PO-6 invariant theorem, PO-7, PQ profile): VERIFIED"
-          echo "✓ PQ signature suite profile activation guard: VERIFIED"
+          echo "✓ PQ signature suite profile activation guard and Coq/Rust profile refinement: VERIFIED"
           echo "✓ Performance benchmarks: COMPLETED"
           echo ""
           echo "PO-4: Coq sighash model and Rust transcript serialization refinement are validated over the modeled matrix; SHA-256 and compiler correctness remain explicit boundaries"
           echo "PO-5: Coq txid preimage and UTXO transition/final-state models are validated against Rust over deterministic structural matrices, with additional Kani bounded valid_tx/delta_tx/valid_block/block-application transition evidence and release runtime txid/store refinement evidence; the selected unbounded path is Coq-first verified/extracted transition core plus thin Rust adapters, while SHA-256 primitive correctness, UtxoStore backend internals, PQ witness cryptographic verification, and compiler correctness remain explicit boundaries"
           echo "PO-6: Coq proves duplicate-free UTXO-domain preservation and total-value non-increase for valid structural block application under an explicit fresh-id/domain-bound precondition, and CI compares Coq-extracted invariant witnesses against Rust structural final-state witnesses including non-applicability boundary cases"
           echo "PO-8: Coq concrete canonicality, extraction refinement, Rust source-level bounded parser refinement, and compiled-artifact translation validation are complete; full compiler correctness remains outside current artifact boundary"
-          echo "PQ Profile: ML-DSA-44/FIPS 204 is the only consensus-enabled tracked suite; SLH-DSA-128s/FIPS 205 is a reserved fallback profile until verifier/refinement artifacts exist"
+          echo "PQ Profile: ML-DSA-44/FIPS 204 is the only consensus-enabled tracked suite; SLH-DSA-128s/FIPS 205 is a reserved fallback profile until verifier/refinement artifacts exist; Coq-extracted and release-binary Rust profile summaries must match"

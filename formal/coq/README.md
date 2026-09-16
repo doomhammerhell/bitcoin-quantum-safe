@@ -3,7 +3,10 @@
 Machine-checked and executable-evidence artifacts for the PQ witness protocol.
 The core checked proofs currently cover PO-1, PO-2, PO-3, PO-4, PO-5, PO-6, PO-7, and
 the bounded varint/canonical witness discharge used for PO-8 evidence, plus a
-standards-aligned cryptographic suite profile/activation boundary. PO-4 is
+standards-aligned cryptographic suite profile/activation boundary. The profile
+boundary now has a Coq-extracted/Rust comparison artifact and release-binary
+certificate, so suite activation metadata is audited through the same executable
+evidence pattern as the other extraction boundaries. PO-4 is
 proved for the Coq sighash model under the SHA-256 collision-resistance axiom
 and now includes a Coq-extracted transcript constructor compared against the
 Rust preimage serialization path. PO-5 now includes a mechanized
@@ -64,6 +67,13 @@ implementation enforces in `../../src/pq_profile.rs` and `../../src/spend_pred.r
 This prevents standards-aligned fallback metadata from silently widening the
 consensus accept set before the corresponding verifier and refinement artifacts
 exist.
+
+The executable bridge for this boundary is `extraction/PQProfileExtraction.v`,
+`extraction/ExtractPQProfileVectors.v`, `extraction/pq_profile_refinement.ml`,
+and `../../examples/generate_pq_profile_refinement.rs`. `scripts/verification/build_extraction.sh`
+compares the Coq-extracted and Rust profile summaries, and
+`../../scripts/verification/verify_pq_profile_refinement.sh` validates the optimized Rust profile
+binary against the Coq-extracted summary with a hash certificate.
 
 ### PO-4: Sighash Commitment (SighashV2.v) — Verified Model + Transcript Refinement
 
@@ -150,7 +160,7 @@ functions and emits per-case witnesses for the directly observable
 pre-state and final-state observations. The matching Rust executable is
 `../../examples/generate_transition_kernel_refinement.rs`, which calls the
 deployed `DeployedTransitionKernel` adapter rather than reusing the legacy
-summary path. `../../compare_transition_kernel_refinement.py` compares those
+summary path. `../../scripts/verification/compare_transition_kernel_refinement.py` compares those
 witnesses by case name and emits semantic field-level diffs on mismatch.
 `../../src/transition_core.rs` exposes the Rust `TransitionKernel` contract,
 `StructuralTxReport`, `StructuralBlockReport`, and the deployed
@@ -164,7 +174,7 @@ blocks from rejected blocks and from explicit fresh-id/collision-boundary cases
 where the Coq theorem's freshness precondition is false, and records pre/post
 total-value observations for the value non-increase theorem. The matching Rust
 executable is `../../examples/generate_transition_invariant_refinement.rs`, and
-`../../compare_transition_invariant_refinement.py` reports field-level semantic
+`../../scripts/verification/compare_transition_invariant_refinement.py` reports field-level semantic
 diffs on mismatch.
 `../../src/kani_proofs.rs` adds twenty-one bounded source-level PO-5 harnesses
 over deployed Rust structural transition control flow: seven
@@ -179,17 +189,17 @@ seeding or SHA-256 internals. These harnesses complement the extracted matrix,
 but do not constitute an unbounded source-level transition refinement proof,
 nor do they prove SHA-256 txid collision resistance, PQ witness cryptographic
 verification, compiler correctness, or toolchain correctness.
-`../../verify_txid_refinement.sh` validates the optimized txid refinement binary
+`../../scripts/verification/verify_txid_refinement.sh` validates the optimized txid refinement binary
 against the Coq-extracted txid transcript summary.
-`../../verify_transition_kernel_refinement.sh` validates the optimized
+`../../scripts/verification/verify_transition_kernel_refinement.sh` validates the optimized
 TransitionKernel report binary against the Coq-extracted
 `CoqExtractedTransitionKernel` oracle witnesses and emits
 `target/transition-kernel-refinement/transition_kernel_refinement_certificate.json`.
-`../../verify_transition_invariant_refinement.sh` validates the optimized PO-6
+`../../scripts/verification/verify_transition_invariant_refinement.sh` validates the optimized PO-6
 invariant witness binary against the Coq-extracted
 `transition_invariant_refinement.ml` output and emits
 `target/transition-invariant-refinement/transition_invariant_refinement_certificate.json`.
-`../../verify_runtime_refinement.sh` separately validates the optimized runtime
+`../../scripts/verification/verify_runtime_refinement.sh` separately validates the optimized runtime
 refinement binary against independent references for the domain-separated
 `txid_preimage`, SHA-256 `compute_txid` wiring, canonical UTXO snapshots, and
 runtime `UtxoSet` insert/get/remove/`delta_tx` behavior through the explicit
@@ -212,7 +222,7 @@ backend internals, or compiler/toolchain correctness.
 | Consensus witness-size guard | `max_witness_size = 16000 <= max_u16`, plus parsed/serialized component length and bounded-canonicality theorems |
 | Consensus parser theorem | `parse_consensus_witness_concrete_*` proves that the consensus-domain parser equals the byte-level parser below the cap, rejects above the cap, and only accepts canonical modeled-domain witnesses |
 | Source-level Rust refinement | 5 PO-8 Kani harnesses in `../../src/kani_proofs.rs` prove bounded symbolic alignment between the Rust layout parser, public parser, consensus parser, trace hook, canonicality predicates, and oversize guard; 21 PO-5 harnesses verify bounded deployed `valid_tx_structural`, `delta_tx`, `valid_block_structural`, structural block-application transition behavior, and the `TransitionKernel` adapter projection |
-| Compiled/runtime artifact validation | `../../verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../verify_transition_kernel_refinement.sh` validates TransitionKernel per-case report witnesses against the Coq-extracted oracle and uses `../../compare_transition_kernel_refinement.py` for semantic diffs; `../../verify_transition_invariant_refinement.sh` validates PO-6 UTXO-domain/value invariant witnesses against Coq extraction and uses `../../compare_transition_invariant_refinement.py` for semantic diffs; `../../verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
+| Compiled/runtime artifact validation | `../../scripts/verification/verify_compiled_refinement.sh` builds release examples, compares their outputs against Coq-extracted summaries, and emits a source/binary hash certificate; `../../scripts/verification/verify_txid_refinement.sh` validates txid preimage release behavior against Coq extraction; `../../scripts/verification/verify_transition_kernel_refinement.sh` validates TransitionKernel per-case report witnesses against the Coq-extracted oracle and uses `../../scripts/verification/compare_transition_kernel_refinement.py` for semantic diffs; `../../scripts/verification/verify_transition_invariant_refinement.sh` validates PO-6 UTXO-domain/value invariant witnesses against Coq extraction and uses `../../scripts/verification/compare_transition_invariant_refinement.py` for semantic diffs; `../../scripts/verification/verify_runtime_refinement.sh` validates txid/store runtime behavior against independent deterministic references |
 | Full CompactSize coverage | Rust implements/tests `0xFE` and `0xFF`; not yet modeled in Coq |
 | Compiler correctness | Not proved |
 

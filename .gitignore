@@ -82,6 +82,7 @@ formal/coq/extraction/txid_refinement
 formal/coq/extraction/transition_refinement
 formal/coq/extraction/transition_kernel_refinement
 formal/coq/extraction/transition_invariant_refinement
+formal/coq/extraction/pq_profile_refinement
 formal/coq/extraction/golden_vectors_extracted.ml
 formal/coq/extraction/golden_vectors_extracted.mli
 formal/coq/extraction/sighash_extracted.ml
@@ -90,6 +91,8 @@ formal/coq/extraction/txid_extracted.ml
 formal/coq/extraction/txid_extracted.mli
 formal/coq/extraction/transition_extracted.ml
 formal/coq/extraction/transition_extracted.mli
+formal/coq/extraction/pq_profile_extracted.ml
+formal/coq/extraction/pq_profile_extracted.mli
 formal/coq/extraction/coq_varint_refinement.json
 formal/coq/extraction/coq_witness_refinement.json
 formal/coq/extraction/coq_sighash_refinement.json
@@ -97,6 +100,7 @@ formal/coq/extraction/coq_txid_refinement.json
 formal/coq/extraction/coq_transition_refinement.json
 formal/coq/extraction/coq_transition_kernel_refinement.json
 formal/coq/extraction/coq_transition_invariant_refinement.json
+formal/coq/extraction/coq_pq_profile_refinement.json
 rust_varint_refinement.json
 rust_witness_refinement.json
 rust_sighash_refinement.json
@@ -104,6 +108,7 @@ rust_txid_refinement.json
 rust_transition_refinement.json
 rust_transition_kernel_refinement.json
 rust_transition_invariant_refinement.json
+rust_pq_profile_refinement.json
 
 # === TLA+ ===
 *.toolbox/

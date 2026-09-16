@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_extraction.sh: Build script for Coq→OCaml extraction
+# scripts/verification/build_extraction.sh: Build script for Coq→OCaml extraction
 #
 # This script:
 # 1. Compiles all Coq modules in the correct order
@@ -14,7 +14,8 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/formal/coq"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$ROOT_DIR/formal/coq"
 
 echo "=========================================="
 echo "Building Coq Proofs and Extraction"
@@ -35,6 +36,7 @@ echo "[2/5] Base modules compiled successfully"
 echo "[3/5] Compiling extraction module..."
 cd extraction
 coqc -Q .. BitcoinPQ -I .. WitnessExtraction.v
+coqc -Q .. BitcoinPQ -I .. PQProfileExtraction.v
 coqc -Q .. BitcoinPQ -I .. SighashExtraction.v
 coqc -Q .. BitcoinPQ -I .. TxidExtraction.v
 coqc -Q .. BitcoinPQ -I .. TransitionExtraction.v
@@ -44,6 +46,7 @@ echo "[4/5] Extraction module compiled"
 # Step 3: Extract to OCaml
 echo "[5/5] Extracting to OCaml..."
 coqc -Q .. BitcoinPQ ExtractWitnessVectors.v
+coqc -Q .. BitcoinPQ ExtractPQProfileVectors.v
 coqc -Q .. BitcoinPQ ExtractSighashVectors.v
 coqc -Q .. BitcoinPQ ExtractTxidVectors.v
 coqc -Q .. BitcoinPQ ExtractTransitionVectors.v
@@ -55,12 +58,14 @@ echo "=========================================="
 # Step 4: Compile OCaml code
 echo "Compiling OCaml golden vector generator..."
 ocamlc -c golden_vectors_extracted.mli golden_vectors_extracted.ml
+ocamlc -c pq_profile_extracted.mli pq_profile_extracted.ml
 ocamlc -c sighash_extracted.mli sighash_extracted.ml
 ocamlc -c txid_extracted.mli txid_extracted.ml
 ocamlc -c transition_extracted.mli transition_extracted.ml
 ocamlc -o golden_vectors golden_vectors_extracted.cmo golden_vectors.ml
 ocamlc -o varint_refinement golden_vectors_extracted.cmo varint_refinement.ml
 ocamlc -o witness_refinement golden_vectors_extracted.cmo witness_refinement.ml
+ocamlc -o pq_profile_refinement pq_profile_extracted.cmo pq_profile_refinement.ml
 ocamlc -o sighash_refinement sighash_extracted.cmo sighash_refinement.ml
 ocamlc -o txid_refinement txid_extracted.cmo txid_refinement.ml
 ocamlc -o transition_refinement transition_extracted.cmo transition_refinement.ml
@@ -75,6 +80,8 @@ echo "Running Coq-extracted varint refinement summary..."
 ./varint_refinement > coq_varint_refinement.json
 echo "Running Coq-extracted witness refinement summary..."
 ./witness_refinement > coq_witness_refinement.json
+echo "Running Coq-extracted PQ profile refinement summary..."
+./pq_profile_refinement > coq_pq_profile_refinement.json
 echo "Running Coq-extracted sighash transcript refinement summary..."
 ./sighash_refinement > coq_sighash_refinement.json
 echo "Running Coq-extracted txid preimage refinement summary..."
@@ -87,13 +94,15 @@ echo "Running Coq-extracted transition invariant refinement witnesses..."
 ./transition_invariant_refinement > coq_transition_invariant_refinement.json
 
 # Step 5: Return to project root and generate Rust vectors
-cd "$SCRIPT_DIR"
+cd "$ROOT_DIR"
 echo "Generating Rust golden vectors..."
 cargo run --example generate_golden_vectors > rust_vectors.json
 echo "Generating Rust varint refinement summary..."
 cargo run --example generate_varint_refinement > rust_varint_refinement.json
 echo "Generating Rust witness refinement summary..."
 cargo run --example generate_witness_refinement > rust_witness_refinement.json
+echo "Generating Rust PQ profile refinement summary..."
+cargo run --example generate_pq_profile_refinement > rust_pq_profile_refinement.json
 echo "Generating Rust sighash transcript refinement summary..."
 cargo run --example generate_sighash_refinement > rust_sighash_refinement.json
 echo "Generating Rust txid preimage refinement summary..."
@@ -154,6 +163,20 @@ try:
         rust_witness = json.load(f)
 except FileNotFoundError:
     print("ERROR: Rust witness refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('formal/coq/extraction/coq_pq_profile_refinement.json', 'r') as f:
+        coq_pq_profile = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Coq PQ profile refinement summary not found.")
+    sys.exit(1)
+
+try:
+    with open('rust_pq_profile_refinement.json', 'r') as f:
+        rust_pq_profile = json.load(f)
+except FileNotFoundError:
+    print("ERROR: Rust PQ profile refinement summary not found.")
     sys.exit(1)
 
 try:
@@ -289,6 +312,12 @@ if coq_witness != rust_witness:
     print(f"Rust: {rust_witness}")
     sys.exit(1)
 
+if coq_pq_profile != rust_pq_profile:
+    print("\n=== PQ PROFILE REFINEMENT MISMATCH ===")
+    print(f"Coq:  {coq_pq_profile}")
+    print(f"Rust: {rust_pq_profile}")
+    sys.exit(1)
+
 if coq_sighash != rust_sighash:
     print("\n=== SIGHASH TRANSCRIPT REFINEMENT MISMATCH ===")
     print(f"Coq:  {coq_sighash}")
@@ -313,7 +342,7 @@ if coq_transition_kernel != rust_transition_kernel:
         subprocess.run(
             [
                 sys.executable,
-                "compare_transition_kernel_refinement.py",
+                "scripts/verification/compare_transition_kernel_refinement.py",
                 "formal/coq/extraction/coq_transition_kernel_refinement.json",
                 "rust_transition_kernel_refinement.json",
             ]
@@ -326,7 +355,7 @@ if coq_transition_invariant != rust_transition_invariant:
         subprocess.run(
             [
                 sys.executable,
-                "compare_transition_invariant_refinement.py",
+                "scripts/verification/compare_transition_invariant_refinement.py",
                 "formal/coq/extraction/coq_transition_invariant_refinement.json",
                 "rust_transition_invariant_refinement.json",
             ]
@@ -337,12 +366,14 @@ print("\n=== SUCCESS ===")
 print("All bounded vectors match byte-for-byte!")
 print("Exhaustive u16 varint refinement summaries match!")
 print("Witness parser/serializer/consensus-domain/trace refinement summaries match!")
+print("PQ signature-suite profile refinement summaries match!")
 print("Sighash transcript refinement summaries match!")
 print("Txid preimage refinement summaries match!")
 print("UTXO structural transition/final-state refinement summaries match!")
 print("TransitionKernel per-case structured witnesses match!")
 print("PO-6 UTXO-domain/value invariant per-case witnesses match!")
 print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
+print("PQ Profile: Coq profile boundary ↔ Rust pq_profile.rs extraction-boundary evidence")
 print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
 print("PO-5: Coq txid/UTXO structural transition/final-state model ↔ Rust structural entrypoint extraction-boundary evidence")
 print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
@@ -362,6 +393,8 @@ echo "  - formal/coq/extraction/coq_varint_refinement.json"
 echo "  - rust_varint_refinement.json"
 echo "  - formal/coq/extraction/coq_witness_refinement.json"
 echo "  - rust_witness_refinement.json"
+echo "  - formal/coq/extraction/coq_pq_profile_refinement.json"
+echo "  - rust_pq_profile_refinement.json"
 echo "  - formal/coq/extraction/coq_sighash_refinement.json"
 echo "  - rust_sighash_refinement.json"
 echo "  - formal/coq/extraction/coq_txid_refinement.json"
@@ -379,19 +412,20 @@ echo "  PO-2 (Determinism):       VERIFIED"
 echo "  PO-3 (Parse Canonicality): VERIFIED"
 echo "  PO-4 (Sighash Commitment): VERIFIED MODEL (SighashV2.v + Rust PBT)"
 echo "  PO-4 (Rust transcript):     COQ-EXTRACTED VS RUST PREIMAGE SERIALIZATION REFINEMENT"
-echo "  PO-4 (Compiled artifact):   RUN ./verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
+echo "  PO-4 (Compiled artifact):   RUN ./scripts/verification/verify_sighash_refinement.sh FOR RELEASE-BINARY TRANSCRIPT VALIDATION"
 echo "  PO-5 (Txid preimage):      COQ-EXTRACTED VS RUST TXID PREIMAGE REFINEMENT"
 echo "  PO-5 (Transition Det.):    VERIFIED MODEL + RUST STRUCTURAL TRANSITION/FINAL-STATE REFINEMENT EVIDENCE"
 echo "  PO-5 (Kernel adapter):     COQ-EXTRACTED ORACLE VS RUST TRANSITIONKERNEL PER-CASE REPORT REFINEMENT"
-echo "  PO-5 (Txid compiled):      RUN ./verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
-echo "  PO-5 (Compiled artifact):  RUN ./verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION/FINAL-STATE VALIDATION"
-echo "  PO-5 (Kernel compiled):    RUN ./verify_transition_kernel_refinement.sh FOR RELEASE-BINARY TRANSITIONKERNEL VALIDATION"
+echo "  PO-5 (Txid compiled):      RUN ./scripts/verification/verify_txid_refinement.sh FOR RELEASE-BINARY TXID PREIMAGE VALIDATION"
+echo "  PO-5 (Compiled artifact):  RUN ./scripts/verification/verify_transition_refinement.sh FOR RELEASE-BINARY TRANSITION/FINAL-STATE VALIDATION"
+echo "  PO-5 (Kernel compiled):    RUN ./scripts/verification/verify_transition_kernel_refinement.sh FOR RELEASE-BINARY TRANSITIONKERNEL VALIDATION"
 echo "  PO-6 (Invariant model):    COQ STRUCTURAL UTXO-DOMAIN PRESERVATION + TOTAL-VALUE NON-INCREASE THEOREMS UNDER EXPLICIT FRESH-ID PRECONDITION"
 echo "  PO-6 (Invariant bridge):   COQ-EXTRACTED VS RUST PER-CASE UTXO-DOMAIN/VALUE INVARIANT WITNESSES"
-echo "  PO-6 (Compiled artifact):  RUN ./verify_transition_invariant_refinement.sh FOR RELEASE-BINARY INVARIANT VALIDATION"
+echo "  PO-6 (Compiled artifact):  RUN ./scripts/verification/verify_transition_invariant_refinement.sh FOR RELEASE-BINARY INVARIANT VALIDATION"
 echo "  PO-7 (Cost Boundedness):   VERIFIED"
 echo "  PO-8 (Correspondence):     BOUNDED EXTRACTION EVIDENCE + CONCRETE CANONICALITY + EXHAUSTIVE VARINT + CONSENSUS WITNESS REFINEMENT (<= u16)"
-echo "  PO-8 (Rust source):        RUN ./verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"
-echo "  PO-8 (Compiled artifact):  RUN ./verify_compiled_refinement.sh FOR RELEASE-BINARY TRANSLATION VALIDATION"
-echo "  PQ Profile Boundary:       VERIFIED PROFILE GUARD (FIPS 204 PRIMARY, FIPS 205 RESERVED FALLBACK)"
+echo "  PO-8 (Rust source):        RUN ./scripts/verification/verify_source_refinement.sh FOR KANI SOURCE-LEVEL BOUNDED REFINEMENT"
+echo "  PO-8 (Compiled artifact):  RUN ./scripts/verification/verify_compiled_refinement.sh FOR RELEASE-BINARY TRANSLATION VALIDATION"
+echo "  PQ Profile Boundary:       VERIFIED PROFILE GUARD + COQ-EXTRACTED VS RUST PROFILE REFINEMENT"
+echo "  PQ Profile Compiled:       RUN ./scripts/verification/verify_pq_profile_refinement.sh FOR RELEASE-BINARY PROFILE VALIDATION"
 echo ""

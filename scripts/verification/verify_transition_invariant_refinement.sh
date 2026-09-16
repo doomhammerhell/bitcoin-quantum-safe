@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="${TRANSITION_INVARIANT_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/transition-invariant-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"
@@ -25,7 +26,7 @@ require_file() {
     return 0
   fi
 
-  echo "missing $label; run 'opam exec -- bash ./build_extraction.sh' or download the Coq CI artifact first" >&2
+  echo "missing $label; run 'opam exec -- bash ./scripts/verification/build_extraction.sh' or download the Coq CI artifact first" >&2
   exit 1
 }
 
@@ -62,7 +63,7 @@ rust_value = load_json(rust_transition_invariant_path)
 compare_result = subprocess.run(
     [
         sys.executable,
-        str(root / "compare_transition_invariant_refinement.py"),
+        str(root / "scripts/verification/compare_transition_invariant_refinement.py"),
         coq_transition_invariant_path,
         rust_transition_invariant_path,
     ],
@@ -103,7 +104,7 @@ tracked_inputs = [
     "formal/coq/extraction/ExtractTransitionVectors.v",
     "formal/coq/extraction/transition_invariant_refinement.ml",
     "examples/generate_transition_invariant_refinement.rs",
-    "compare_transition_invariant_refinement.py",
+    "scripts/verification/compare_transition_invariant_refinement.py",
 ]
 
 release_binary = root / "target/release/examples/generate_transition_invariant_refinement"
@@ -132,7 +133,7 @@ certificate = {
     },
     "evidence": {
         "format": "per-case-structured-invariant-witnesses",
-        "semantic_diff_tool": "compare_transition_invariant_refinement.py",
+        "semantic_diff_tool": "scripts/verification/compare_transition_invariant_refinement.py",
         "case_count": len(coq_value.get("cases", [])),
         "domain_theorem_applicable_case_count": len(coq_applicable_cases),
         "value_theorem_applicable_case_count": len(coq_value_applicable_cases),

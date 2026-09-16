@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="${TRANSITION_KERNEL_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/transition-kernel-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"
@@ -25,7 +26,7 @@ require_file() {
     return 0
   fi
 
-  echo "missing $label; run 'opam exec -- bash ./build_extraction.sh' or download the Coq CI artifact first" >&2
+  echo "missing $label; run 'opam exec -- bash ./scripts/verification/build_extraction.sh' or download the Coq CI artifact first" >&2
   exit 1
 }
 
@@ -61,7 +62,7 @@ rust_value = load_json(rust_transition_kernel_path)
 compare_result = subprocess.run(
     [
         sys.executable,
-        str(root / "compare_transition_kernel_refinement.py"),
+        str(root / "scripts/verification/compare_transition_kernel_refinement.py"),
         coq_transition_kernel_path,
         rust_transition_kernel_path,
     ],
@@ -98,7 +99,7 @@ tracked_inputs = [
     "formal/coq/extraction/ExtractTransitionVectors.v",
     "formal/coq/extraction/transition_kernel_refinement.ml",
     "examples/generate_transition_kernel_refinement.rs",
-    "compare_transition_kernel_refinement.py",
+    "scripts/verification/compare_transition_kernel_refinement.py",
 ]
 
 release_binary = "target/release/examples/generate_transition_kernel_refinement"
@@ -112,7 +113,7 @@ certificate = {
     },
     "evidence": {
         "format": "per-case-structured-witnesses",
-        "semantic_diff_tool": "compare_transition_kernel_refinement.py",
+        "semantic_diff_tool": "scripts/verification/compare_transition_kernel_refinement.py",
         "transaction_cases": len(coq_value.get("cases", {}).get("transactions", [])),
         "block_cases": len(coq_value.get("cases", {}).get("blocks", [])),
     },

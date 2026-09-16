@@ -7,7 +7,8 @@ Sighash v2 transcript/preimage serialization, separated from the SHA-256
 collision-resistance axiom. For PO-5 it covers txid preimage serialization,
 structural UTXO transition,
 transaction validation, block validation, migration/freeze, and cost refinement
-against the deployed Rust transition functions, plus PO-6 UTXO-domain/value
+against the deployed Rust transition functions, plus PQ suite profile/activation
+metadata refinement, plus PO-6 UTXO-domain/value
 invariant witness refinement under the explicit Coq fresh-id theorem boundary, plus direct
 `CoqExtractedTransitionKernel` per-case report refinement against the Rust
 `DeployedTransitionKernel` adapter. The repository-level source
@@ -18,13 +19,14 @@ harnesses, plus bounded checks for the Rust `TransitionKernel` adapter
 projection boundary. A separate runtime-refinement layer validates txid
 preimage/SHA-256 wiring and runtime UTXO-store behavior against deterministic
 references. The compiled-artifact
-validation layers are `../../../verify_compiled_refinement.sh`,
-`../../../verify_sighash_refinement.sh`, and
-`../../../verify_txid_refinement.sh`, and
-`../../../verify_transition_refinement.sh`; TransitionKernel adapter validation
-is `../../../verify_transition_kernel_refinement.sh`; PO-6 invariant validation
-is `../../../verify_transition_invariant_refinement.sh`; runtime txid/store
-validation is `../../../verify_runtime_refinement.sh`.
+validation layers are `../../../scripts/verification/verify_compiled_refinement.sh`,
+`../../../scripts/verification/verify_sighash_refinement.sh`, and
+`../../../scripts/verification/verify_txid_refinement.sh`, and
+`../../../scripts/verification/verify_transition_refinement.sh`; TransitionKernel adapter validation
+is `../../../scripts/verification/verify_transition_kernel_refinement.sh`; PO-6 invariant validation
+is `../../../scripts/verification/verify_transition_invariant_refinement.sh`; runtime txid/store
+validation is `../../../scripts/verification/verify_runtime_refinement.sh`; PQ profile validation is
+`../../../scripts/verification/verify_pq_profile_refinement.sh`.
 
 ## Source of Truth
 
@@ -55,6 +57,13 @@ validation is `../../../verify_runtime_refinement.sh`.
 - `coq_vectors.json` is the checked-in output from the extracted serializer
   harness. `rust_vectors.json` at the repository root is the matching Rust
   output.
+- `PQProfileExtraction.v` exposes the checked PQ suite profile/activation
+  boundary from `../PQProfile.v` as extraction rows and boolean properties.
+- `ExtractPQProfileVectors.v` is the extraction driver that generates
+  `pq_profile_extracted.ml`.
+- `pq_profile_refinement.ml` formats the Coq-extracted profile rows as
+  structured JSON. The matching Rust executable is
+  `examples/generate_pq_profile_refinement.rs`.
 - `SighashExtraction.v` exposes the Coq Sighash v2 transcript constructors from
   `SighashV2.v`, including outpoint serialization, output serialization,
   spent-output serialization, and final preimage assembly with supplied 32-byte
@@ -87,7 +96,7 @@ validation is `../../../verify_runtime_refinement.sh`.
   `StructuralTxReport`/`StructuralBlockReport` witnesses over the same
   projection matrix. The matching Rust executable is
   `examples/generate_transition_kernel_refinement.rs`.
-- `compare_transition_kernel_refinement.py` is the semantic comparator for those
+- `scripts/verification/compare_transition_kernel_refinement.py` is the semantic comparator for those
   witnesses. It reports mismatches by transaction/block case name and nested
   field path instead of relying on hash summaries or full-object dumps.
 - `transition_invariant_refinement.ml` exposes the PO-6 UTXO-domain preservation
@@ -97,11 +106,31 @@ validation is `../../../verify_runtime_refinement.sh`.
   final-state domain observations, final-state total value, spent-input
   absence, and explicit non-applicability reasons for freshness-boundary cases. The matching Rust
   executable is `examples/generate_transition_invariant_refinement.rs`.
-- `compare_transition_invariant_refinement.py` is the semantic comparator for
+- `scripts/verification/compare_transition_invariant_refinement.py` is the semantic comparator for
   the PO-6 invariant witnesses. It reports mismatches by block case name and
   nested field path, including theorem-applicability and boundary-reason fields.
 
 ## Formal Scope
+
+### PQ Profile Activation Scope
+
+The PQ profile refinement layer is a control-plane correspondence check, not a
+cryptographic proof of ML-DSA or SLH-DSA. `PQProfile.v` proves that the tracked
+FIPS 204 ML-DSA-44 primary profile and FIPS 205 SLH-DSA-128s fallback profile
+fit the consensus witness cap, use distinct assumption families, and that only
+ML-DSA-44 is consensus-enabled while SLH-DSA-128s lacks an implemented verifier.
+
+The extraction harness turns those checked facts into a structured JSON summary
+containing profile dimensions, witness sizes, implemented-verifier flags,
+consensus-enabled flags, primary/fallback markers, and aggregate activation
+properties. The Rust counterpart derives the same summary from `src/pq_profile.rs`.
+CI compares the two summaries exactly, and `scripts/verification/verify_pq_profile_refinement.sh`
+builds the optimized Rust summary executable and records source, binary, and
+output hashes in `target/pq-profile-refinement/pq_profile_refinement_certificate.json`.
+
+This closes the profile metadata correspondence boundary. It does not prove
+FIPS primitive security, the correctness of signature verification libraries,
+or compiler/toolchain correctness.
 
 ### PO-4 Sighash Transcript Scope
 
@@ -167,14 +196,14 @@ UTXO states, not internal map order or witness cryptographic checks.
 
 This does not prove SHA-256 txid collision resistance, UTXO-store backend internals,
 PQ witness cryptographic verification, or compiler/toolchain correctness.
-`verify_txid_refinement.sh` adds the txid release-binary validation layer and
+`scripts/verification/verify_txid_refinement.sh` adds the txid release-binary validation layer and
 emits `target/txid-refinement/txid_refinement_certificate.json`.
-`verify_transition_refinement.sh` adds the transition release-binary validation layer and
+`scripts/verification/verify_transition_refinement.sh` adds the transition release-binary validation layer and
 emits `target/transition-refinement/transition_refinement_certificate.json`.
-`verify_transition_kernel_refinement.sh` adds the TransitionKernel report
+`scripts/verification/verify_transition_kernel_refinement.sh` adds the TransitionKernel report
 release-binary validation layer and emits
 `target/transition-kernel-refinement/transition_kernel_refinement_certificate.json`.
-On mismatch it invokes `compare_transition_kernel_refinement.py`, which prints
+On mismatch it invokes `scripts/verification/compare_transition_kernel_refinement.py`, which prints
 field-level semantic diffs by case name.
 The source-level layer adds twenty-one Kani bounded PO-5 harnesses for the
 deployed Rust structural entrypoints: seven `valid_tx_structural` cases
@@ -189,7 +218,7 @@ seeding or SHA-256 internals. Those harnesses complement the extracted matrix,
 but are not an unbounded source-level transition proof and do not prove txid
 collision resistance, UTXO-store backend internals, PQ witness cryptographic
 verification, or compiler output.
-`verify_runtime_refinement.sh` adds a runtime release-binary validation layer for
+`scripts/verification/verify_runtime_refinement.sh` adds a runtime release-binary validation layer for
 `txid_preimage`, `compute_txid`, canonical UTXO snapshots, and runtime
 `UtxoSet` insert/get/remove/`delta_tx` behavior against independent deterministic
 references. This narrows the txid/store implementation boundary, but it is not a
@@ -226,10 +255,10 @@ explicit: the Coq theorem does not derive fresh txids from SHA-256, and the Rust
 projection does not pretend that a single abstract ID can safely represent both
 an old UTXO and a newly created output.
 
-`verify_transition_invariant_refinement.sh` builds the optimized Rust invariant
+`scripts/verification/verify_transition_invariant_refinement.sh` builds the optimized Rust invariant
 witness executable, compares it against
 `coq_transition_invariant_refinement.json` through
-`compare_transition_invariant_refinement.py`, and emits
+`scripts/verification/compare_transition_invariant_refinement.py`, and emits
 `target/transition-invariant-refinement/transition_invariant_refinement_certificate.json`
 with toolchain, input, binary, and generated-output hashes. This is operational
 evidence for the structural-domain/value invariant boundary; it is not a proof
@@ -300,18 +329,19 @@ closes the bounded source-level PO-8 parser-refinement step and adds bounded
 source-level PO-5 structural transition evidence.
 
 The compiled-artifact validation layer is also separate from extraction:
-`verify_compiled_refinement.sh` builds the PO-8 Rust refinement examples in
+`scripts/verification/verify_compiled_refinement.sh` builds the PO-8 Rust refinement examples in
 release mode, executes those binaries, compares their JSON outputs against the
 Coq-extracted summaries, and emits a certificate with source, lockfile, binary,
-and generated-output hashes. `verify_sighash_refinement.sh` performs the same
+and generated-output hashes. `scripts/verification/verify_sighash_refinement.sh` performs the same
 release-binary validation pattern for the PO-4 sighash transcript executable.
-`verify_transition_refinement.sh` performs the same release-binary validation
+`scripts/verification/verify_transition_refinement.sh` performs the same release-binary validation
 pattern for the PO-5 transition/final-state refinement executable.
-`verify_transition_kernel_refinement.sh` performs the same validation pattern for
+`scripts/verification/verify_transition_kernel_refinement.sh` performs the same validation pattern for
 the PO-5 TransitionKernel per-case report executable.
-`verify_transition_invariant_refinement.sh` performs the same validation pattern
+`scripts/verification/verify_transition_invariant_refinement.sh` performs the same validation pattern
 for the PO-6 UTXO-domain/value invariant witness executable. These give auditable
 translation-validation artifacts for the produced binaries. The runtime
 refinement validator follows the same certificate pattern for txid/store runtime
-behavior, while still leaving compiler correctness outside the current artifact
-boundary.
+behavior, and `scripts/verification/verify_pq_profile_refinement.sh` applies the same certificate
+pattern to the PQ profile activation summary, while still leaving compiler
+correctness outside the current artifact boundary.

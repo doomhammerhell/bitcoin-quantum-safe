@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="${COMPILED_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/compiled-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"
@@ -25,7 +26,7 @@ require_file() {
     return 0
   fi
 
-  echo "missing $label; run 'opam exec -- bash ./build_extraction.sh' or download the Coq CI artifact first" >&2
+  echo "missing $label; run 'opam exec -- bash ./scripts/verification/build_extraction.sh' or download the Coq CI artifact first" >&2
   exit 1
 }
 
