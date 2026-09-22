@@ -43,10 +43,11 @@ configure_verification_rust_toolchain() {
     return 0
   fi
 
-  local system_name machine rust_host native_toolchain apple_silicon
+  local system_name machine rust_host rustc_version native_toolchain apple_silicon
   system_name="$(uname -s 2>/dev/null || true)"
   machine="$(uname -m 2>/dev/null || true)"
-  rust_host="$(rustc -Vv 2>/dev/null | awk '/^host:/ {print $2; exit}')"
+  rustc_version="$(rustc -Vv 2>/dev/null || true)"
+  rust_host="$(awk '/^host:/ {print $2; exit}' <<<"$rustc_version")"
   apple_silicon=false
   if [[ "$system_name" == "Darwin" ]]; then
     if [[ "$machine" == "arm64" || "$(sysctl -in hw.optional.arm64 2>/dev/null || echo 0)" == "1" ]]; then
@@ -69,7 +70,19 @@ EOF
     exit 1
   fi
 
-  if ! rustup toolchain list | sed 's/ (.*$//' | grep -qx "$native_toolchain"; then
+  local installed_toolchains
+  installed_toolchains="$(rustup toolchain list 2>/dev/null || true)"
+  if ! awk -v wanted="$native_toolchain" '
+    {
+      sub(/ .*/, "", $0)
+      if ($0 == wanted) {
+        found = 1
+      }
+    }
+    END {
+      exit found ? 0 : 1
+    }
+  ' <<<"$installed_toolchains"; then
     cat >&2 <<EOF
 Apple Silicon host is running Rust host '$rust_host', which can fail to link via
 xcrun when CommandLineTools only provide arm64 libxcrun.
