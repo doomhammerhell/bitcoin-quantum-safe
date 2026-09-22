@@ -37,6 +37,10 @@ Extraction "transition_extracted.ml"
   TransitionExtraction.extract_apply_valid_block_structural
   TransitionExtraction.extract_utxo_domain
   TransitionExtraction.extract_utxo_total_value
+  TransitionExtraction.extract_legacy_utxo_count
+  TransitionExtraction.extract_legacy_tx_output_count
+  TransitionExtraction.extract_frozen_utxo_count
+  TransitionExtraction.extract_accepted_block_inputs_pq_or_missing
   TransitionExtraction.extract_domain_has_no_duplicates
   TransitionExtraction.extract_domain_below_bool
   TransitionExtraction.extract_block_output_count

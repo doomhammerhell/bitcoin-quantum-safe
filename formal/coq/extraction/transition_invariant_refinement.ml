@@ -1,10 +1,9 @@
 (* transition_invariant_refinement.ml: PO-6 structural invariant witnesses.
  *
- * This harness exposes the Coq theorem boundary for UTXO-domain preservation:
- * if the pre-state domain has no duplicate abstract outpoints and every
- * pre-state outpoint is below the fresh-id base, valid structural block
- * application preserves a duplicate-free final UTXO domain below the next
- * fresh-id bound. Cases that violate the freshness precondition are reported as
+ * This harness exposes the Coq theorem boundary for UTXO-domain preservation,
+ * total-value non-increase, migration monotonicity, and freeze observables.
+ * The domain theorem requires a duplicate-free pre-state domain below the
+ * fresh-id base; cases that violate that freshness precondition are reported as
  * explicit boundary cases rather than as theorem-covered executions.
  *)
 
@@ -60,6 +59,46 @@ let block_cases =
       block_txs = [ tx [ 23 ] [ tx_output 2 50 ] ];
       block_fresh_id = 350;
       block_observed_ids = [ 23; 350 ];
+    };
+    {
+      block_name = "grace-period-migrates-legacy-to-pq";
+      block_height = 120;
+      block_utxo = [ (30, output 0 100) ];
+      block_txs = [ tx [ 30 ] [ tx_output 2 90 ] ];
+      block_fresh_id = 360;
+      block_observed_ids = [ 30; 360 ];
+    };
+    {
+      block_name = "grace-period-rejects-legacy-recreation";
+      block_height = 120;
+      block_utxo = [ (31, output 0 100) ];
+      block_txs = [ tx [ 31 ] [ tx_output 0 90 ] ];
+      block_fresh_id = 370;
+      block_observed_ids = [ 31; 370 ];
+    };
+    {
+      block_name = "post-cutover-preserves-frozen-legacy-with-pq-spend";
+      block_height = 180;
+      block_utxo = [ (40, output 0 70); (41, output 2 50) ];
+      block_txs = [ tx [ 41 ] [ tx_output 2 45 ] ];
+      block_fresh_id = 380;
+      block_observed_ids = [ 40; 41; 380 ];
+    };
+    {
+      block_name = "post-cutover-rejects-frozen-legacy-spend";
+      block_height = 180;
+      block_utxo = [ (42, output 0 70) ];
+      block_txs = [ tx [ 42 ] [ tx_output 2 70 ] ];
+      block_fresh_id = 390;
+      block_observed_ids = [ 42; 390 ];
+    };
+    {
+      block_name = "post-cutover-mixed-inputs-rejected";
+      block_height = 180;
+      block_utxo = [ (43, output 0 40); (44, output 2 40) ];
+      block_txs = [ tx [ 43; 44 ] [ tx_output 2 70 ] ];
+      block_fresh_id = 400;
+      block_observed_ids = [ 43; 44; 400 ];
     };
     {
       block_name = "invalid-missing-input-block";
@@ -180,6 +219,28 @@ let boundary_reason freshness_precondition final_state =
   else
     None
 
+let migration_reason post_announcement final_state =
+  if not post_announcement then
+    Some "pre-announcement; migration monotonicity theorem premise not active"
+  else if not (option_is_some final_state) then
+    Some "block rejected; migration monotonicity theorem premise not satisfied"
+  else
+    None
+
+let cutover_reason post_cutover final_state =
+  if not post_cutover then
+    Some "pre-cutover; freeze theorem premise not active"
+  else if not (option_is_some final_state) then
+    Some "block rejected; freeze theorem premise not satisfied"
+  else
+    None
+
+let frozen_count_reason config_order post_cutover final_state =
+  if not config_order then
+    Some "invalid migration config ordering; frozen-count theorem premise not satisfied"
+  else
+    cutover_reason post_cutover final_state
+
 let json_reason = function
   | None -> "null"
   | Some reason -> json_string reason
@@ -203,8 +264,23 @@ let json_case case_index case =
   let pre_total_value =
     TransitionExtraction.extract_utxo_total_value case.block_utxo
   in
+  let pre_legacy_count =
+    TransitionExtraction.extract_legacy_utxo_count case.block_utxo
+  in
+  let pre_frozen_count =
+    TransitionExtraction.extract_frozen_utxo_count case.block_height config case.block_utxo
+  in
   let spent_input_ids =
     TransitionExtraction.extract_block_input_outpoints case.block_txs
+  in
+  let post_announcement =
+    config.announcement_height <= case.block_height
+  in
+  let post_cutover =
+    config.cutover_height <= case.block_height
+  in
+  let config_order =
+    config.announcement_height <= config.cutover_height
   in
   let pre_domain_unique =
     TransitionExtraction.extract_domain_has_no_duplicates case.block_utxo
@@ -249,6 +325,42 @@ let json_case case_index case =
     | None -> None
     | Some total -> Some (total <= pre_total_value)
   in
+  let final_legacy_count =
+    match final_state with
+    | None -> None
+    | Some utxo -> Some (TransitionExtraction.extract_legacy_utxo_count utxo)
+  in
+  let final_legacy_count_lte_pre_after_announcement =
+    if post_announcement then
+      match final_legacy_count with
+      | None -> None
+      | Some count -> Some (count <= pre_legacy_count)
+    else
+      None
+  in
+  let final_frozen_count =
+    match final_state with
+    | None -> None
+    | Some utxo ->
+        Some
+          (TransitionExtraction.extract_frozen_utxo_count
+            case.block_height config utxo)
+  in
+  let final_frozen_count_lte_pre_after_cutover =
+    if config_order && post_cutover then
+      match final_frozen_count with
+      | None -> None
+      | Some count -> Some (count <= pre_frozen_count)
+    else
+      None
+  in
+  let accepted_inputs_pq_or_missing =
+    TransitionExtraction.extract_accepted_block_inputs_pq_or_missing
+      case.block_utxo case.block_txs case.block_height config case.block_fresh_id
+  in
+  let accepted_inputs_pq_or_missing_after_cutover =
+    if post_cutover then Some accepted_inputs_pq_or_missing else None
+  in
   let theorem_applicable = freshness_precondition && option_is_some final_state in
   let theorem_conclusion_holds =
     match final_domain_unique, final_domain_below_next_fresh with
@@ -262,6 +374,30 @@ let json_case case_index case =
     | Some _ when theorem_applicable -> Some false
     | _ -> None
   in
+  let migration_theorem_applicable =
+    post_announcement && option_is_some final_state
+  in
+  let migration_theorem_conclusion_holds =
+    match final_legacy_count_lte_pre_after_announcement with
+    | Some true when migration_theorem_applicable -> Some true
+    | Some _ when migration_theorem_applicable -> Some false
+    | _ -> None
+  in
+  let freeze_theorem_applicable =
+    post_cutover && option_is_some final_state
+  in
+  let freeze_theorem_conclusion_holds =
+    if freeze_theorem_applicable then Some accepted_inputs_pq_or_missing else None
+  in
+  let frozen_count_theorem_applicable =
+    config_order && post_cutover && option_is_some final_state
+  in
+  let frozen_count_theorem_conclusion_holds =
+    match final_frozen_count_lte_pre_after_cutover with
+    | Some true when frozen_count_theorem_applicable -> Some true
+    | Some _ when frozen_count_theorem_applicable -> Some false
+    | _ -> None
+  in
   Printf.sprintf
     "{\
      \"kind\": \"block-invariant\", \
@@ -273,6 +409,8 @@ let json_case case_index case =
      \"observed_ids\": %s, \
      \"pre_domain\": %s, \
      \"pre_total_value\": %d, \
+     \"pre_legacy_count\": %d, \
+     \"pre_frozen_count\": %d, \
      \"pre_state\": %s, \
      \"block\": {\"transactions\": %s}, \
      \"spent_input_ids\": %s, \
@@ -288,7 +426,13 @@ let json_case case_index case =
        \"final_domain_below_next_fresh\": %s, \
        \"spent_inputs_absent\": %s, \
        \"final_total_value\": %s, \
-       \"final_total_value_lte_pre\": %s\
+       \"final_total_value_lte_pre\": %s, \
+       \"final_legacy_count\": %s, \
+       \"final_legacy_count_lte_pre_after_announcement\": %s, \
+       \"final_frozen_count\": %s, \
+       \"final_frozen_count_lte_pre_after_cutover\": %s, \
+       \"accepted_inputs_pq_or_missing\": %s, \
+       \"accepted_inputs_pq_or_missing_after_cutover\": %s\
      }, \
      \"theorem\": {\
        \"name\": \"apply_valid_block_structural_preserves_domain_nodup\", \
@@ -298,6 +442,24 @@ let json_case case_index case =
      }, \
      \"value_theorem\": {\
        \"name\": \"apply_valid_block_structural_preserves_total_value\", \
+       \"applicable\": %s, \
+       \"conclusion_holds\": %s, \
+       \"non_applicability_reason\": %s\
+     }, \
+     \"migration_theorem\": {\
+       \"name\": \"apply_valid_block_structural_legacy_count_nonincreasing_after_announcement\", \
+       \"applicable\": %s, \
+       \"conclusion_holds\": %s, \
+       \"non_applicability_reason\": %s\
+     }, \
+     \"freeze_theorem\": {\
+       \"name\": \"apply_valid_block_structural_inputs_pq_after_cutover\", \
+       \"applicable\": %s, \
+       \"conclusion_holds\": %s, \
+       \"non_applicability_reason\": %s\
+     }, \
+     \"frozen_count_theorem\": {\
+       \"name\": \"apply_valid_block_structural_frozen_count_nonincreasing_after_cutover\", \
        \"applicable\": %s, \
        \"conclusion_holds\": %s, \
        \"non_applicability_reason\": %s\
@@ -311,6 +473,8 @@ let json_case case_index case =
     (json_int_list case.block_observed_ids)
     (json_int_list pre_domain)
     pre_total_value
+    pre_legacy_count
+    pre_frozen_count
     (json_state case.block_observed_ids case.block_utxo)
     (json_block case.block_txs)
     (json_int_list spent_input_ids)
@@ -324,12 +488,27 @@ let json_case case_index case =
     (json_nullable_bool spent_inputs_absent)
     (json_nullable_int final_total_value)
     (json_nullable_bool final_total_value_lte_pre)
+    (json_nullable_int final_legacy_count)
+    (json_nullable_bool final_legacy_count_lte_pre_after_announcement)
+    (json_nullable_int final_frozen_count)
+    (json_nullable_bool final_frozen_count_lte_pre_after_cutover)
+    (json_bool accepted_inputs_pq_or_missing)
+    (json_nullable_bool accepted_inputs_pq_or_missing_after_cutover)
     (json_bool theorem_applicable)
     (json_nullable_bool theorem_conclusion_holds)
     (json_reason (boundary_reason freshness_precondition final_state))
     (json_bool theorem_applicable)
     (json_nullable_bool value_theorem_conclusion_holds)
     (json_reason (boundary_reason freshness_precondition final_state))
+    (json_bool migration_theorem_applicable)
+    (json_nullable_bool migration_theorem_conclusion_holds)
+    (json_reason (migration_reason post_announcement final_state))
+    (json_bool freeze_theorem_applicable)
+    (json_nullable_bool freeze_theorem_conclusion_holds)
+    (json_reason (cutover_reason post_cutover final_state))
+    (json_bool frozen_count_theorem_applicable)
+    (json_nullable_bool frozen_count_theorem_conclusion_holds)
+    (json_reason (frozen_count_reason config_order post_cutover final_state))
 
 let indexed_json_cases render cases =
   cases
@@ -338,9 +517,9 @@ let indexed_json_cases render cases =
 
 let () =
   Printf.printf "{\n";
-  Printf.printf "  \"model\": \"utxo-domain-and-value-invariant-refinement\",\n";
+  Printf.printf "  \"model\": \"utxo-domain-value-migration-freeze-invariant-refinement\",\n";
   Printf.printf "  \"evidence\": \"per-case-structured-invariant-witnesses\",\n";
-  Printf.printf "  \"proof_boundary\": \"Coq theorems apply_valid_block_structural_preserves_domain_nodup and apply_valid_block_structural_preserves_total_value under explicit fresh-id/domain-bound precondition\",\n";
+  Printf.printf "  \"proof_boundary\": \"Coq theorems for domain preservation, value non-increase, legacy-output non-increase after announcement, PQ-only accepted inputs after cutover, and frozen-count non-increase after cutover under their explicit premises\",\n";
   Printf.printf "  \"case_count\": %d,\n" (List.length block_cases);
   Printf.printf "  \"cases\": [\n%s\n  ]\n" (indexed_json_cases json_case block_cases);
   Printf.printf "}\n"

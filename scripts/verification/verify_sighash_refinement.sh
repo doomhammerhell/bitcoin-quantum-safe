@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/rust_toolchain.sh"
 OUT_DIR="${SIGHASH_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/sighash-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"

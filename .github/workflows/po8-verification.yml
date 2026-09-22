@@ -520,13 +520,13 @@ jobs:
           print("=== SUCCESS: txid preimage refinement summaries match ===")
           print("=== SUCCESS: UTXO transition/final-state refinement summaries match ===")
           print("=== SUCCESS: TransitionKernel per-case structured witnesses match ===")
-          print("=== SUCCESS: PO-6 UTXO-domain/value invariant per-case witnesses match ===")
+          print("=== SUCCESS: PO-6 UTXO-domain/value/migration/freeze invariant per-case witnesses match ===")
           print("PO-8: bounded Coq witness model ↔ Rust encoding implementation extraction-boundary evidence")
           print("PQ Profile: Coq profile boundary ↔ Rust pq_profile.rs extraction-boundary evidence")
           print("PO-4: Coq sighash transcript model ↔ Rust preimage serialization evidence")
           print("PO-5: Coq txid/UTXO transition/final-state model ↔ Rust implementation extraction-boundary evidence")
           print("PO-5: CoqExtractedTransitionKernel oracle ↔ Rust TransitionKernel adapter per-case report evidence")
-          print("PO-6: Coq structural UTXO-domain/value invariant theorems ↔ Rust final-state invariant witness evidence")
+          print("PO-6: Coq structural UTXO-domain/value/migration/freeze invariant theorems ↔ Rust final-state invariant witness evidence")
           print("PQ Profile: FIPS 204 primary + FIPS 205 reserved fallback activation boundary compiled in Coq and enforced in Rust")
           EOF
 
@@ -941,14 +941,14 @@ jobs:
           echo "✓ Txid preimage refinement Coq vs Rust: COMPLETED"
           echo "✓ UTXO transition/final-state refinement Coq vs Rust: COMPLETED"
           echo "✓ TransitionKernel report refinement Coq vs Rust: COMPLETED"
-          echo "✓ PO-6 UTXO-domain/value invariant witness refinement Coq vs Rust: COMPLETED"
+          echo "✓ PO-6 UTXO-domain/value/migration/freeze invariant witness refinement Coq vs Rust: COMPLETED"
           echo "✓ Rust source-level bounded parser and PO-5 transition/final-state refinement harnesses (Kani): VERIFIED"
           echo "✓ Compiled release artifact translation validation: VERIFIED"
           echo "✓ Compiled sighash transcript artifact validation: VERIFIED"
           echo "✓ Compiled txid preimage artifact validation: VERIFIED"
           echo "✓ Compiled UTXO transition/final-state artifact validation: VERIFIED"
           echo "✓ Compiled TransitionKernel report artifact validation: VERIFIED"
-          echo "✓ Compiled PO-6 UTXO-domain/value invariant artifact validation: VERIFIED"
+          echo "✓ Compiled PO-6 UTXO-domain/value/migration/freeze invariant artifact validation: VERIFIED"
           echo "✓ Compiled runtime txid/store refinement artifact validation: VERIFIED"
           echo "✓ Compiled PQ profile artifact validation: VERIFIED"
           echo "✓ Bounded golden vector generation: COMPLETED"
@@ -959,6 +959,6 @@ jobs:
           echo ""
           echo "PO-4: Coq sighash model and Rust transcript serialization refinement are validated over the modeled matrix; SHA-256 and compiler correctness remain explicit boundaries"
           echo "PO-5: Coq txid preimage and UTXO transition/final-state models are validated against Rust over deterministic structural matrices, with additional Kani bounded valid_tx/delta_tx/valid_block/block-application transition evidence and release runtime txid/store refinement evidence; the selected unbounded path is Coq-first verified/extracted transition core plus thin Rust adapters, while SHA-256 primitive correctness, UtxoStore backend internals, PQ witness cryptographic verification, and compiler correctness remain explicit boundaries"
-          echo "PO-6: Coq proves duplicate-free UTXO-domain preservation and total-value non-increase for valid structural block application under an explicit fresh-id/domain-bound precondition, and CI compares Coq-extracted invariant witnesses against Rust structural final-state witnesses including non-applicability boundary cases"
+          echo "PO-6: Coq proves duplicate-free UTXO-domain preservation, total-value non-increase, legacy-count non-increase after announcement, PQ-only accepted-input behavior after cutover, and frozen-count non-increase after cutover for valid structural block application under explicit theorem premises; CI compares Coq-extracted invariant witnesses against Rust structural final-state witnesses including non-applicability boundary cases"
           echo "PO-8: Coq concrete canonicality, extraction refinement, Rust source-level bounded parser refinement, and compiled-artifact translation validation are complete; full compiler correctness remains outside current artifact boundary"
           echo "PQ Profile: ML-DSA-44/FIPS 204 is the only consensus-enabled tracked suite; SLH-DSA-128s/FIPS 205 is a reserved fallback profile until verifier/refinement artifacts exist; Coq-extracted and release-binary Rust profile summaries must match"

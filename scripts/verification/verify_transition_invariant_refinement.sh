@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/rust_toolchain.sh"
 OUT_DIR="${TRANSITION_INVARIANT_REFINEMENT_OUT_DIR:-$ROOT_DIR/target/transition-invariant-refinement}"
 if [[ "$OUT_DIR" != /* ]]; then
   OUT_DIR="$ROOT_DIR/$OUT_DIR"
@@ -105,6 +106,7 @@ tracked_inputs = [
     "formal/coq/extraction/transition_invariant_refinement.ml",
     "examples/generate_transition_invariant_refinement.rs",
     "scripts/verification/compare_transition_invariant_refinement.py",
+    "scripts/verification/verify_transition_invariant_refinement.sh",
 ]
 
 release_binary = root / "target/release/examples/generate_transition_invariant_refinement"
@@ -119,6 +121,21 @@ coq_value_applicable_cases = [
     for case in coq_value.get("cases", [])
     if case.get("value_theorem", {}).get("applicable") is True
 ]
+coq_migration_applicable_cases = [
+    case
+    for case in coq_value.get("cases", [])
+    if case.get("migration_theorem", {}).get("applicable") is True
+]
+coq_freeze_applicable_cases = [
+    case
+    for case in coq_value.get("cases", [])
+    if case.get("freeze_theorem", {}).get("applicable") is True
+]
+coq_frozen_count_applicable_cases = [
+    case
+    for case in coq_value.get("cases", [])
+    if case.get("frozen_count_theorem", {}).get("applicable") is True
+]
 coq_boundary_cases = [
     case
     for case in coq_value.get("cases", [])
@@ -126,9 +143,9 @@ coq_boundary_cases = [
 ]
 
 certificate = {
-    "validation": "PO-6 structural UTXO-domain and value invariant refinement validation",
+    "validation": "PO-6 structural UTXO-domain/value/migration/freeze invariant refinement validation",
     "scope": {
-        "claim": "release binary observing Rust structural final-state invariant witnesses produces the same per-case UTXO-domain preservation and total-value non-increase evidence as the Coq-extracted invariant harness under the explicit fresh-id/domain-bound theorem boundary",
+        "claim": "release binary observing Rust structural final-state invariant witnesses produces the same per-case UTXO-domain preservation, total-value non-increase, legacy-output non-increase after announcement, PQ-only accepted-input behavior after cutover, and frozen-count non-increase evidence as the Coq-extracted invariant harness under each theorem's explicit boundary",
         "non_claim": "this is not a proof of SHA-256 txid collision resistance, UTXO-store backend internals, cryptographic witness verification, rustc, LLVM, linker, CPU, or OS correctness",
     },
     "evidence": {
@@ -137,6 +154,9 @@ certificate = {
         "case_count": len(coq_value.get("cases", [])),
         "domain_theorem_applicable_case_count": len(coq_applicable_cases),
         "value_theorem_applicable_case_count": len(coq_value_applicable_cases),
+        "migration_theorem_applicable_case_count": len(coq_migration_applicable_cases),
+        "freeze_theorem_applicable_case_count": len(coq_freeze_applicable_cases),
+        "frozen_count_theorem_applicable_case_count": len(coq_frozen_count_applicable_cases),
         "freshness_boundary_case_count": len(coq_boundary_cases),
     },
     "domain_theorem_boundary": {
@@ -150,6 +170,24 @@ certificate = {
         "precondition": "NoDup (utxo_domain U) / domain_below U fresh_id / apply_valid_block_structural U block height cfg fresh_id = Some U'",
         "conclusion": "utxo_total_value U' <= utxo_total_value U",
         "economic_scope": "non-increase of total UTXO value; exact fee accounting and monetary-supply policy are outside this structural theorem",
+    },
+    "migration_theorem_boundary": {
+        "coq_theorem": "apply_valid_block_structural_legacy_count_nonincreasing_after_announcement",
+        "precondition": "announcement_height cfg <= height / apply_valid_block_structural U block height cfg fresh_id = Some U'",
+        "conclusion": "legacy_utxo_count U' <= legacy_utxo_count U",
+        "scope": "legacy/taproot-like script versions are all non-PQ script versions in the structural model",
+    },
+    "freeze_theorem_boundary": {
+        "coq_theorem": "apply_valid_block_structural_inputs_pq_after_cutover",
+        "precondition": "cutover_height cfg <= height / apply_valid_block_structural U block height cfg fresh_id = Some U'",
+        "conclusion": "accepted_block_inputs_pq_or_missing U block height cfg fresh_id = true",
+        "scope": "missing inputs are ignored by the freeze predicate because structural validity rejects them earlier",
+    },
+    "frozen_count_theorem_boundary": {
+        "coq_theorem": "apply_valid_block_structural_frozen_count_nonincreasing_after_cutover",
+        "precondition": "announcement_height cfg <= cutover_height cfg / cutover_height cfg <= height / apply_valid_block_structural U block height cfg fresh_id = Some U'",
+        "conclusion": "frozen_utxo_count height cfg U' <= frozen_utxo_count height cfg U",
+        "scope": "structural frozen-count non-increase; cryptographic witness validity remains a separate consensus-path obligation",
     },
     "projection": {
         "coq": "association-list UTXO indexed by abstract nat outpoint IDs",
@@ -171,6 +209,6 @@ with open(certificate_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 
 print("=== SUCCESS ===")
-print("Compiled transition invariant refinement binary matches Coq-extracted PO-6 domain/value invariant witnesses.")
+print("Compiled transition invariant refinement binary matches Coq-extracted PO-6 domain/value/migration/freeze invariant witnesses.")
 print(f"Certificate: {certificate_path}")
 PY

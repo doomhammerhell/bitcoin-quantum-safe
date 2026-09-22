@@ -4,6 +4,11 @@
 
 set -e  # Exit on first error
 
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$HOOK_DIR/.." && pwd)"
+source "$ROOT_DIR/scripts/verification/rust_toolchain.sh"
+cd "$ROOT_DIR"
+
 echo "=========================================="
 echo "Running Pre-Commit Checks"
 echo "=========================================="

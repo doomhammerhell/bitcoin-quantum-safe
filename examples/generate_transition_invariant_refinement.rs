@@ -1,11 +1,10 @@
 //! Rust-side PO-6 structural invariant refinement witnesses.
 //!
 //! This executable mirrors the Coq extraction harness for UTXO-domain
-//! preservation. It reports the explicit fresh-id/domain-bound precondition used
-//! by the Coq theorem and only observes final-state invariants when that
-//! precondition holds. Boundary cases that would require a txid freshness /
-//! collision-resistance argument are included but marked as outside the theorem
-//! premise.
+//! preservation, total-value non-increase, migration monotonicity, and freeze
+//! observables. It reports the explicit fresh-id/domain-bound precondition used
+//! by the domain theorem and marks cases that would require a txid freshness /
+//! collision-resistance argument as outside that theorem premise.
 
 use std::collections::HashMap;
 
@@ -14,7 +13,9 @@ use pq_witness_protocol::params::MigrationConfig;
 use pq_witness_protocol::types::{
     Block, OutPoint, Output, Transaction, TxInput, TxOutput, UtxoSet,
 };
-use pq_witness_protocol::{valid_block_structural, validate_and_apply_block_structural};
+use pq_witness_protocol::{
+    delta_tx, valid_block_structural, valid_tx_structural, validate_and_apply_block_structural,
+};
 use serde_json::{json, Value};
 
 type AbstractId = u64;
@@ -190,6 +191,61 @@ fn block_cases() -> Vec<BlockCase> {
             observed_ids: vec![23, 350],
         },
         BlockCase {
+            name: "grace-period-migrates-legacy-to-pq",
+            height: 120,
+            utxo: vec![(30, OutputShape::new(0, 100))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![30],
+                outputs: vec![OutputShape::new(2, 90)],
+            }],
+            fresh_id: 360,
+            observed_ids: vec![30, 360],
+        },
+        BlockCase {
+            name: "grace-period-rejects-legacy-recreation",
+            height: 120,
+            utxo: vec![(31, OutputShape::new(0, 100))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![31],
+                outputs: vec![OutputShape::new(0, 90)],
+            }],
+            fresh_id: 370,
+            observed_ids: vec![31, 370],
+        },
+        BlockCase {
+            name: "post-cutover-preserves-frozen-legacy-with-pq-spend",
+            height: 180,
+            utxo: vec![(40, OutputShape::new(0, 70)), (41, OutputShape::new(2, 50))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![41],
+                outputs: vec![OutputShape::new(2, 45)],
+            }],
+            fresh_id: 380,
+            observed_ids: vec![40, 41, 380],
+        },
+        BlockCase {
+            name: "post-cutover-rejects-frozen-legacy-spend",
+            height: 180,
+            utxo: vec![(42, OutputShape::new(0, 70))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![42],
+                outputs: vec![OutputShape::new(2, 70)],
+            }],
+            fresh_id: 390,
+            observed_ids: vec![42, 390],
+        },
+        BlockCase {
+            name: "post-cutover-mixed-inputs-rejected",
+            height: 180,
+            utxo: vec![(43, OutputShape::new(0, 40)), (44, OutputShape::new(2, 40))],
+            txs: vec![BlockTxSpec {
+                inputs: vec![43, 44],
+                outputs: vec![OutputShape::new(2, 70)],
+            }],
+            fresh_id: 400,
+            observed_ids: vec![43, 44, 400],
+        },
+        BlockCase {
             name: "invalid-missing-input-block",
             height: 50,
             utxo: vec![],
@@ -313,6 +369,55 @@ fn utxo_total_value(utxo: &UtxoSet) -> u64 {
     utxo.values().map(|output| output.value).sum()
 }
 
+fn is_pq_script_version(script_version: u8) -> bool {
+    script_version == 2
+}
+
+fn legacy_utxo_count(utxo: &UtxoSet) -> u64 {
+    utxo.values()
+        .filter(|output| !is_pq_script_version(output.script_version))
+        .count() as u64
+}
+
+fn frozen_utxo_count(height: u64, config: &MigrationConfig, utxo: &UtxoSet) -> u64 {
+    if height < config.cutover_height {
+        0
+    } else {
+        legacy_utxo_count(utxo)
+    }
+}
+
+fn all_present_inputs_pq_or_missing(utxo: &UtxoSet, tx: &Transaction) -> bool {
+    tx.inputs
+        .iter()
+        .all(|input| match utxo.get(&input.outpoint) {
+            Some(spent) => is_pq_script_version(spent.script_version),
+            None => true,
+        })
+}
+
+fn accepted_block_inputs_pq_or_missing(
+    utxo: &UtxoSet,
+    block: &Block,
+    height: u64,
+    config: &MigrationConfig,
+) -> bool {
+    let mut local_utxo = utxo.clone();
+
+    for tx in block {
+        if valid_tx_structural(&local_utxo, tx, height, config) {
+            if !all_present_inputs_pq_or_missing(&local_utxo, tx) {
+                return false;
+            }
+            delta_tx(&mut local_utxo, tx);
+        } else {
+            return true;
+        }
+    }
+
+    true
+}
+
 fn present_abstract_ids(
     observed_ids: &[AbstractId],
     projection: &OutpointProjection,
@@ -411,17 +516,56 @@ fn boundary_reason(freshness_precondition: bool, final_state: Option<&UtxoSet>) 
     }
 }
 
+fn migration_reason(post_announcement: bool, final_state: Option<&UtxoSet>) -> Value {
+    if !post_announcement {
+        json!("pre-announcement; migration monotonicity theorem premise not active")
+    } else if final_state.is_none() {
+        json!("block rejected; migration monotonicity theorem premise not satisfied")
+    } else {
+        Value::Null
+    }
+}
+
+fn cutover_reason(post_cutover: bool, final_state: Option<&UtxoSet>) -> Value {
+    if !post_cutover {
+        json!("pre-cutover; freeze theorem premise not active")
+    } else if final_state.is_none() {
+        json!("block rejected; freeze theorem premise not satisfied")
+    } else {
+        Value::Null
+    }
+}
+
+fn frozen_count_reason(
+    config_order: bool,
+    post_cutover: bool,
+    final_state: Option<&UtxoSet>,
+) -> Value {
+    if !config_order {
+        json!("invalid migration config ordering; frozen-count theorem premise not satisfied")
+    } else {
+        cutover_reason(post_cutover, final_state)
+    }
+}
+
 fn case_json(index: usize, case: &BlockCase) -> Value {
     let (utxo, projection, block) = build_block_case(case);
+    let migration_config = config();
     let output_count = block_output_count(case);
     let next_fresh_id = case.fresh_id + output_count;
     let pre_domain = pre_domain_ids(case);
     let pre_total_value = utxo_total_value(&utxo);
+    let pre_legacy_count = legacy_utxo_count(&utxo);
+    let pre_frozen_count = frozen_utxo_count(case.height, &migration_config, &utxo);
     let pre_domain_unique = !has_duplicate_ids(&pre_domain);
     let pre_domain_below_fresh = pre_domain.iter().all(|id| *id < case.fresh_id);
     let freshness_precondition = pre_domain_unique && pre_domain_below_fresh;
-    let valid_block = valid_block_structural(&utxo, &block, case.height, &config());
-    let final_state = validate_and_apply_block_structural(&utxo, &block, case.height, &config());
+    let post_announcement = migration_config.announcement_height <= case.height;
+    let post_cutover = migration_config.cutover_height <= case.height;
+    let config_order = migration_config.announcement_height <= migration_config.cutover_height;
+    let valid_block = valid_block_structural(&utxo, &block, case.height, &migration_config);
+    let final_state =
+        validate_and_apply_block_structural(&utxo, &block, case.height, &migration_config);
     let observed_final = final_state.as_ref().filter(|_| freshness_precondition);
 
     let final_present_ids = observed_final
@@ -444,6 +588,27 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
     let final_total_value = observed_final.map(utxo_total_value);
     let final_total_value_lte_pre =
         final_total_value.map(|total_value| total_value <= pre_total_value);
+    let final_legacy_count = final_state.as_ref().map(legacy_utxo_count);
+    let final_legacy_count_lte_pre_after_announcement = if post_announcement {
+        final_legacy_count.map(|count| count <= pre_legacy_count)
+    } else {
+        None
+    };
+    let final_frozen_count = final_state
+        .as_ref()
+        .map(|final_utxo| frozen_utxo_count(case.height, &migration_config, final_utxo));
+    let final_frozen_count_lte_pre_after_cutover = if config_order && post_cutover {
+        final_frozen_count.map(|count| count <= pre_frozen_count)
+    } else {
+        None
+    };
+    let accepted_inputs_pq_or_missing =
+        accepted_block_inputs_pq_or_missing(&utxo, &block, case.height, &migration_config);
+    let accepted_inputs_pq_or_missing_after_cutover = if post_cutover {
+        Some(accepted_inputs_pq_or_missing)
+    } else {
+        None
+    };
 
     let theorem_applicable = freshness_precondition && final_state.is_some();
     let theorem_conclusion_holds = if theorem_applicable {
@@ -453,6 +618,24 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
     };
     let value_theorem_conclusion_holds = if theorem_applicable {
         Some(final_total_value_lte_pre == Some(true))
+    } else {
+        None
+    };
+    let migration_theorem_applicable = post_announcement && final_state.is_some();
+    let migration_theorem_conclusion_holds = if migration_theorem_applicable {
+        Some(final_legacy_count_lte_pre_after_announcement == Some(true))
+    } else {
+        None
+    };
+    let freeze_theorem_applicable = post_cutover && final_state.is_some();
+    let freeze_theorem_conclusion_holds = if freeze_theorem_applicable {
+        Some(accepted_inputs_pq_or_missing)
+    } else {
+        None
+    };
+    let frozen_count_theorem_applicable = config_order && post_cutover && final_state.is_some();
+    let frozen_count_theorem_conclusion_holds = if frozen_count_theorem_applicable {
+        Some(final_frozen_count_lte_pre_after_cutover == Some(true))
     } else {
         None
     };
@@ -467,6 +650,8 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
         "observed_ids": case.observed_ids,
         "pre_domain": pre_domain,
         "pre_total_value": pre_total_value,
+        "pre_legacy_count": pre_legacy_count,
+        "pre_frozen_count": pre_frozen_count,
         "pre_state": observed_state(&case.observed_ids, &projection, &utxo),
         "block": block_json(&block, &projection),
         "spent_input_ids": spent_inputs,
@@ -485,6 +670,12 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
             "spent_inputs_absent": spent_inputs_absent,
             "final_total_value": final_total_value,
             "final_total_value_lte_pre": final_total_value_lte_pre,
+            "final_legacy_count": final_legacy_count,
+            "final_legacy_count_lte_pre_after_announcement": final_legacy_count_lte_pre_after_announcement,
+            "final_frozen_count": final_frozen_count,
+            "final_frozen_count_lte_pre_after_cutover": final_frozen_count_lte_pre_after_cutover,
+            "accepted_inputs_pq_or_missing": accepted_inputs_pq_or_missing,
+            "accepted_inputs_pq_or_missing_after_cutover": accepted_inputs_pq_or_missing_after_cutover,
         },
         "theorem": {
             "name": "apply_valid_block_structural_preserves_domain_nodup",
@@ -498,6 +689,24 @@ fn case_json(index: usize, case: &BlockCase) -> Value {
             "conclusion_holds": value_theorem_conclusion_holds,
             "non_applicability_reason": boundary_reason(freshness_precondition, final_state.as_ref()),
         },
+        "migration_theorem": {
+            "name": "apply_valid_block_structural_legacy_count_nonincreasing_after_announcement",
+            "applicable": migration_theorem_applicable,
+            "conclusion_holds": migration_theorem_conclusion_holds,
+            "non_applicability_reason": migration_reason(post_announcement, final_state.as_ref()),
+        },
+        "freeze_theorem": {
+            "name": "apply_valid_block_structural_inputs_pq_after_cutover",
+            "applicable": freeze_theorem_applicable,
+            "conclusion_holds": freeze_theorem_conclusion_holds,
+            "non_applicability_reason": cutover_reason(post_cutover, final_state.as_ref()),
+        },
+        "frozen_count_theorem": {
+            "name": "apply_valid_block_structural_frozen_count_nonincreasing_after_cutover",
+            "applicable": frozen_count_theorem_applicable,
+            "conclusion_holds": frozen_count_theorem_conclusion_holds,
+            "non_applicability_reason": frozen_count_reason(config_order, post_cutover, final_state.as_ref()),
+        },
     })
 }
 
@@ -509,9 +718,9 @@ fn main() {
         .map(|(index, case)| case_json(index, case))
         .collect();
     let output = json!({
-        "model": "utxo-domain-and-value-invariant-refinement",
+        "model": "utxo-domain-value-migration-freeze-invariant-refinement",
         "evidence": "per-case-structured-invariant-witnesses",
-        "proof_boundary": "Coq theorems apply_valid_block_structural_preserves_domain_nodup and apply_valid_block_structural_preserves_total_value under explicit fresh-id/domain-bound precondition",
+        "proof_boundary": "Coq theorems for domain preservation, value non-increase, legacy-output non-increase after announcement, PQ-only accepted inputs after cutover, and frozen-count non-increase after cutover under their explicit premises",
         "case_count": cases.len(),
         "cases": case_values,
     });

@@ -623,6 +623,56 @@ Fixpoint utxo_total_value (U : UtxoSet) : nat :=
   | (_, out) :: rest => value out + utxo_total_value rest
   end.
 
+(** Legacy/freeze observables used by the PO-6 migration monotonicity layer.
+    Script version 2 is the unique PQ version in this abstract model; every
+    other version is legacy/taproot-like authorization state. *)
+Definition is_legacy_script_version (version : nat) : bool :=
+  negb (is_pq_script_version version).
+
+Definition output_is_legacy (out : Output) : bool :=
+  is_legacy_script_version (script_version out).
+
+Definition tx_output_is_legacy (out : TxOutput) : bool :=
+  is_legacy_script_version (tx_script_version out).
+
+Fixpoint legacy_utxo_count (U : UtxoSet) : nat :=
+  match U with
+  | [] => 0
+  | (_, out) :: rest =>
+      (if output_is_legacy out then 1 else 0) + legacy_utxo_count rest
+  end.
+
+Fixpoint legacy_tx_output_count (outs : list TxOutput) : nat :=
+  match outs with
+  | [] => 0
+  | out :: rest =>
+      (if tx_output_is_legacy out then 1 else 0) + legacy_tx_output_count rest
+  end.
+
+Definition frozen_utxo_count
+    (height : nat) (config : MigrationConfig) (U : UtxoSet) : nat :=
+  if height <? cutover_height config then 0 else legacy_utxo_count U.
+
+Fixpoint accepted_block_inputs_pq_or_missing
+    (U : UtxoSet)
+    (txs : list Transaction)
+    (height : nat)
+    (config : MigrationConfig)
+    (fresh_id : nat) : bool :=
+  match txs with
+  | [] => true
+  | tx :: rest =>
+      if valid_tx_structural U tx height config then
+        all_present_inputs_pq_or_missing U (inputs tx) &&
+        accepted_block_inputs_pq_or_missing
+          (delta_tx U tx fresh_id)
+          rest
+          height
+          config
+          (fresh_id + length (outputs tx))
+      else true
+  end.
+
 Lemma in_domain_remove : forall U removed op,
   In op (utxo_domain (remove U removed)) ->
   In op (utxo_domain U).
@@ -1059,6 +1109,234 @@ Proof.
   eapply apply_block_transitions_structural_preserves_total_value; eauto.
 Qed.
 
+(** Migration/freeze monotonicity.  These theorems strengthen PO-6 beyond
+    generic domain/value preservation by connecting the executable
+    migration/freeze predicates to structural state observables. *)
+
+Lemma all_outputs_pq_legacy_count_zero : forall outs,
+  all_outputs_pq outs = true ->
+  legacy_tx_output_count outs = 0.
+Proof.
+  induction outs as [| out rest IH]; intros Hall; simpl in *.
+  - reflexivity.
+  - apply Bool.andb_true_iff in Hall.
+    destruct Hall as [Hout Hrest].
+    unfold tx_output_is_legacy, is_legacy_script_version.
+    rewrite Hout.
+    simpl.
+    apply IH in Hrest.
+    lia.
+Qed.
+
+Theorem valid_tx_structural_outputs_pq_after_announcement :
+  forall U tx height config,
+    valid_tx_structural U tx height config = true ->
+    announcement_height config <= height ->
+    all_outputs_pq (outputs tx) = true.
+Proof.
+  intros U tx height config Hvalid Hannounced.
+  unfold valid_tx_structural in Hvalid.
+  destruct (has_duplicate_inputs tx) eqn:Hdup; try discriminate.
+  destruct (sum_input_values U (inputs tx)) as [input_sum |] eqn:Hinput_sum; try discriminate.
+  apply Bool.andb_true_iff in Hvalid.
+  destruct Hvalid as [Hvalue_and_migration _Hfreeze].
+  apply Bool.andb_true_iff in Hvalue_and_migration.
+  destruct Hvalue_and_migration as [_Hvalue_bound Hmigration].
+  unfold check_migration_rules_structural in Hmigration.
+  apply Bool.andb_true_iff in Hmigration.
+  destruct Hmigration as [Houtputs _Hinputs].
+  apply Bool.orb_true_iff in Houtputs.
+  destruct Houtputs as [Hpre_activation | Hpq_outputs].
+  - apply Nat.ltb_lt in Hpre_activation. lia.
+  - exact Hpq_outputs.
+Qed.
+
+Theorem valid_tx_structural_no_legacy_outputs_after_announcement :
+  forall U tx height config,
+    valid_tx_structural U tx height config = true ->
+    announcement_height config <= height ->
+    legacy_tx_output_count (outputs tx) = 0.
+Proof.
+  intros U tx height config Hvalid Hannounced.
+  apply all_outputs_pq_legacy_count_zero.
+  eapply valid_tx_structural_outputs_pq_after_announcement; eauto.
+Qed.
+
+Theorem valid_tx_structural_inputs_pq_after_cutover :
+  forall U tx height config,
+    valid_tx_structural U tx height config = true ->
+    cutover_height config <= height ->
+    all_present_inputs_pq_or_missing U (inputs tx) = true.
+Proof.
+  intros U tx height config Hvalid Hcutover.
+  unfold valid_tx_structural in Hvalid.
+  destruct (has_duplicate_inputs tx) eqn:Hdup; try discriminate.
+  destruct (sum_input_values U (inputs tx)) as [input_sum |] eqn:Hinput_sum; try discriminate.
+  apply Bool.andb_true_iff in Hvalid.
+  destruct Hvalid as [_Hvalue_and_migration Hfreeze].
+  unfold check_no_frozen_inputs_structural in Hfreeze.
+  apply Bool.orb_true_iff in Hfreeze.
+  destruct Hfreeze as [Hpre_cutover | Hpq_inputs].
+  - apply Nat.ltb_lt in Hpre_cutover. lia.
+  - exact Hpq_inputs.
+Qed.
+
+Theorem apply_block_transitions_structural_inputs_pq_after_cutover :
+  forall U txs height config fresh_id U',
+    cutover_height config <= height ->
+    apply_block_transitions_structural U txs height config fresh_id = Some U' ->
+    accepted_block_inputs_pq_or_missing U txs height config fresh_id = true.
+Proof.
+  intros U txs. revert U.
+  induction txs as [| tx rest IH]; intros U height config fresh_id U' Hcutover Happly; simpl in *.
+  - reflexivity.
+  - destruct (valid_tx_structural U tx height config) eqn:Hvalid; try discriminate.
+    apply Bool.andb_true_iff. split.
+    + eapply valid_tx_structural_inputs_pq_after_cutover; eauto.
+    + eapply IH; eauto.
+Qed.
+
+Theorem apply_valid_block_structural_inputs_pq_after_cutover :
+  forall U txs height config fresh_id U',
+    cutover_height config <= height ->
+    apply_valid_block_structural U txs height config fresh_id = Some U' ->
+    accepted_block_inputs_pq_or_missing U txs height config fresh_id = true.
+Proof.
+  intros U txs height config fresh_id U' Hcutover Happly.
+  unfold apply_valid_block_structural in Happly.
+  destruct (apply_block_transitions_structural U txs height config fresh_id)
+    as [U_trans |] eqn:Htransitions; try discriminate.
+  destruct (check_block_cost_structural txs) eqn:Hcost; try discriminate.
+  inversion Happly. subst U_trans.
+  eapply apply_block_transitions_structural_inputs_pq_after_cutover; eauto.
+Qed.
+
+Lemma legacy_utxo_count_remove_le : forall U op,
+  legacy_utxo_count (remove U op) <= legacy_utxo_count U.
+Proof.
+  induction U as [| [k out] rest IH]; intros op; simpl.
+  - lia.
+  - specialize (IH op).
+    destruct (Nat.eqb k op) eqn:Heq.
+    + destruct (output_is_legacy out) eqn:Hlegacy.
+      * simpl.
+        apply Nat.le_trans with (m := legacy_utxo_count rest).
+        -- exact IH.
+        -- lia.
+      * simpl. exact IH.
+    + destruct (output_is_legacy out) eqn:Hlegacy.
+      * simpl. rewrite Hlegacy.
+        replace (S (legacy_utxo_count rest)) with (1 + legacy_utxo_count rest) by lia.
+        apply Nat.add_le_mono_l. exact IH.
+      * simpl. rewrite Hlegacy. exact IH.
+Qed.
+
+Lemma legacy_utxo_count_remove_inputs_le : forall ins U,
+  legacy_utxo_count (remove_inputs U ins) <= legacy_utxo_count U.
+Proof.
+  induction ins as [| inp rest IH]; intros U; simpl.
+  - lia.
+  - eapply Nat.le_trans.
+    + apply IH.
+    + apply legacy_utxo_count_remove_le.
+Qed.
+
+Lemma legacy_utxo_count_app_single : forall U k out,
+  legacy_utxo_count (U ++ [(k, out)]) =
+  legacy_utxo_count U + (if output_is_legacy out then 1 else 0).
+Proof.
+  induction U as [| [k' out'] rest IH]; intros k out; simpl.
+  - destruct (output_is_legacy out); lia.
+  - rewrite IH.
+    destruct (output_is_legacy out'); destruct (output_is_legacy out); lia.
+Qed.
+
+Lemma legacy_utxo_count_add_outputs : forall outs U base,
+  legacy_utxo_count (add_outputs U outs base) =
+  legacy_utxo_count U + legacy_tx_output_count outs.
+Proof.
+  induction outs as [| out rest IH]; intros U base; simpl.
+  - lia.
+  - rewrite IH.
+    rewrite legacy_utxo_count_app_single.
+    unfold output_is_legacy, tx_output_is_legacy, is_legacy_script_version.
+    simpl. lia.
+Qed.
+
+Theorem delta_tx_legacy_count_nonincreasing_after_announcement :
+  forall U tx height config fresh_id,
+    valid_tx_structural U tx height config = true ->
+    announcement_height config <= height ->
+    legacy_utxo_count (delta_tx U tx fresh_id) <= legacy_utxo_count U.
+Proof.
+  intros U tx height config fresh_id Hvalid Hannounced.
+  unfold delta_tx.
+  rewrite legacy_utxo_count_add_outputs.
+  rewrite (valid_tx_structural_no_legacy_outputs_after_announcement U tx height config Hvalid Hannounced).
+  pose proof (legacy_utxo_count_remove_inputs_le (inputs tx) U) as Hremove.
+  lia.
+Qed.
+
+Theorem apply_block_transitions_structural_legacy_count_nonincreasing_after_announcement :
+  forall U txs height config fresh_id U',
+    announcement_height config <= height ->
+    apply_block_transitions_structural U txs height config fresh_id = Some U' ->
+    legacy_utxo_count U' <= legacy_utxo_count U.
+Proof.
+  intros U txs. revert U.
+  induction txs as [| tx rest IH]; intros U height config fresh_id U' Hannounced Happly; simpl in *.
+  - inversion Happly. lia.
+  - destruct (valid_tx_structural U tx height config) eqn:Hvalid; try discriminate.
+    pose proof
+      (delta_tx_legacy_count_nonincreasing_after_announcement
+        U tx height config fresh_id Hvalid Hannounced)
+      as Hdelta.
+    specialize
+      (IH
+        (delta_tx U tx fresh_id)
+        height
+        config
+        (fresh_id + length (outputs tx))
+        U'
+        Hannounced
+        Happly).
+    lia.
+Qed.
+
+Theorem apply_valid_block_structural_legacy_count_nonincreasing_after_announcement :
+  forall U txs height config fresh_id U',
+    announcement_height config <= height ->
+    apply_valid_block_structural U txs height config fresh_id = Some U' ->
+    legacy_utxo_count U' <= legacy_utxo_count U.
+Proof.
+  intros U txs height config fresh_id U' Hannounced Happly.
+  unfold apply_valid_block_structural in Happly.
+  destruct (apply_block_transitions_structural U txs height config fresh_id)
+    as [U_trans |] eqn:Htransitions; try discriminate.
+  destruct (check_block_cost_structural txs) eqn:Hcost; try discriminate.
+  inversion Happly. subst U_trans.
+  eapply apply_block_transitions_structural_legacy_count_nonincreasing_after_announcement; eauto.
+Qed.
+
+Theorem apply_valid_block_structural_frozen_count_nonincreasing_after_cutover :
+  forall U txs height config fresh_id U',
+    announcement_height config <= cutover_height config ->
+    cutover_height config <= height ->
+    apply_valid_block_structural U txs height config fresh_id = Some U' ->
+    frozen_utxo_count height config U' <= frozen_utxo_count height config U.
+Proof.
+  intros U txs height config fresh_id U' Hconfig_order Hcutover Happly.
+  unfold frozen_utxo_count.
+  assert (Hpost_cutover : (height <? cutover_height config) = false).
+  { apply Nat.ltb_ge. exact Hcutover. }
+  rewrite Hpost_cutover.
+  eapply apply_valid_block_structural_legacy_count_nonincreasing_after_announcement.
+  - eapply Nat.le_trans.
+    + exact Hconfig_order.
+    + exact Hcutover.
+  - exact Happly.
+Qed.
+
 Theorem valid_block_structural_deterministic :
   forall U txs height config fresh_id,
     valid_block_structural U txs height config fresh_id =
@@ -1153,11 +1431,20 @@ Qed.
     5. [apply_valid_block_structural_preserves_total_value]:
        valid structural block application cannot increase total UTXO value
        under the same duplicate-free domain and fresh-id bound
+    6. [apply_valid_block_structural_legacy_count_nonincreasing_after_announcement]:
+       accepted structural block application cannot increase the number of
+       legacy outputs after the migration announcement height
+    7. [apply_valid_block_structural_inputs_pq_after_cutover]:
+       accepted structural block application after cutover consumes only PQ
+       present inputs, matching the freeze predicate boundary
+    8. [apply_valid_block_structural_frozen_count_nonincreasing_after_cutover]:
+       under the valid migration-height ordering, accepted structural block
+       application after cutover cannot increase frozen legacy UTXOs
 
     PO-7: Cost Boundedness
-    6. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
-    7. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
-    8. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
+    9. [cost_bounded_by_weight]: Cost(tx) ≤ 1 · weight(tx)
+    10. [cost_equals_weight]: Cost(tx) = weight(tx) (exact equality)
+    11. [block_cost_bounded_by_weights]: block invariant implies per-tx bound
 
     Correspondence to other artifacts:
     - UTXO model matches [formal/tla/BitcoinPQ.tla] (outpoint ids, delta)
