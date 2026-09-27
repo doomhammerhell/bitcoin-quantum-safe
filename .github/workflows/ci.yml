@@ -12,6 +12,15 @@ env:
   OCAML_VERSION: 4.14.0
 
 jobs:
+  workflow-audit:
+    name: Formal workflow audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit formal verification workflow coverage
+        run: python3 scripts/verification/audit_workflows.py
+
   rust:
     name: Rust tests
     runs-on: ubuntu-latest

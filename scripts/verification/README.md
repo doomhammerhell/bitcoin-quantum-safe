@@ -17,6 +17,8 @@ automation should live here unless it is specific to a narrower subsystem.
   emits hash certificates under `target/`.
 - `compare_*.py`: semantic comparators that report structured field-level
   differences for witness-rich refinement artifacts.
+- `audit_workflows.py`: checks that CI workflow triggers and required formal
+  verification jobs still cover shared verification scripts and helpers.
 
 These scripts provide executable evidence and translation-validation artifacts.
 They do not claim compiler, linker, CPU, operating-system, primitive
